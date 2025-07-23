@@ -27,7 +27,7 @@ export default function DashboardTabs() {
           onClick={() => setActiveTab("temperature")}
           className={`w-1/2 py-4 text-center font-semibold text-lg transition-colors duration-200 ${
             !isSubmission
-              ? "bg-[#1e3a8a] text-white border-b-4 border-white"
+              ? "bg-[#b78fbf] text-white border-b-4 border-white"
               : "bg-[#cbd5e1] text-gray-800 hover:bg-[#1e3a8a]/90 hover:text-white"
           }`}
         >
