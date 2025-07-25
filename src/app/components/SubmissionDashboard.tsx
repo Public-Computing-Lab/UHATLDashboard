@@ -98,7 +98,7 @@ export default function SubmissionDashboard() {
   // Initial data load only
   useEffect(() => {
     fetchData();
-  }, []); // Empty dependency array - only runs once on mount
+  }, [fetchData]); // Add fetchData to dependencies
 
   const clearFilters = () => {
     setStartDate("");
@@ -125,7 +125,7 @@ export default function SubmissionDashboard() {
 
   // Client-side filtering and sorting
   const filteredAndSortedData = useMemo(() => {
-    let filtered = data.filter((item) => {
+    const filtered = data.filter((item) => {
       if (!searchTerm) return true;
       const search = searchTerm.toLowerCase();
       return (
@@ -150,8 +150,8 @@ export default function SubmissionDashboard() {
           aValue = aStart && aStop ? aStop.getTime() - aStart.getTime() : 0;
           bValue = bStart && bStop ? bStop.getTime() - bStart.getTime() : 0;
         } else {
-          aValue = a[sortConfig.key];
-          bValue = b[sortConfig.key];
+          aValue = a[sortConfig.key] as string | number;
+          bValue = b[sortConfig.key] as string | number;
         }
 
         if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
