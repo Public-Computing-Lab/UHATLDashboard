@@ -38,13 +38,14 @@ class SupabaseCSVIngester:
             'neighborhood': ['neighborhood'],
             'transport': ['transport'],
             'created_at': ['submission datetime', 'submission_datetime'],
-            'csv_url': ['csv url', 'csv_url'],
+            'csv_url': ['csv url', 'csv_url', 'CSV URL'],
+            'start_time': ['start time', 'start_time'],
+            'stop_time': ['end time', 'end_time', 'stop_time'],
             'has_csv': ['**has csv', 'has csv', 'has_csv'],
-            'notes': ['notes'],
             'complete': ['complete', 'is_complete'],
             'has_probe_temp': ['**has temp', 'has temp', 'has_temp'],
             'has_lat_lng': ['has location', 'has_location'],
-            'num_records': ['numrecords', 'num_records', 'records']
+            'num_records': ['numrecords', 'num_records', 'records'],
         }
 
         self.stats = {
@@ -81,7 +82,7 @@ class SupabaseCSVIngester:
     def validate_email(self, email: str) -> bool:
         if not email:
             return False
-        return re.match(r'^[^@]+@[^@]+\\.[^@]+$', email) is not None
+        return re.match(r'^[^@]+@[^@]+\.[^@]+$', email) is not None
 
     def parse_datetime(self, value: str) -> Optional[str]:
         if not value or value.strip() == '':
@@ -99,6 +100,24 @@ class SupabaseCSVIngester:
                 continue
         logger.warning(f"Unparsable datetime: {value}")
         return None
+
+    def calculate_time_taken(self, start_time: str, stop_time: str) -> Optional[int]:
+        """Calculate time taken in minutes between start and stop times"""
+        if not start_time or not stop_time:
+            return None
+        try:
+            start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+            stop_dt = datetime.fromisoformat(stop_time.replace('Z', '+00:00'))
+            
+            if stop_dt < start_dt:
+                logger.warning(f"Stop time {stop_time} is before start time {start_time}")
+                return None
+                
+            time_diff = stop_dt - start_dt
+            return int(time_diff.total_seconds() / 60)  # Convert to minutes
+        except Exception as e:
+            logger.warning(f"Error calculating time difference: {e}")
+            return None
 
     def parse_boolean(self, value: str) -> Optional[bool]:
         if not value:
@@ -133,6 +152,14 @@ class SupabaseCSVIngester:
 
     def process_row(self, row: List[str], header_map: Dict[str, int]) -> Optional[Dict[str, Any]]:
         raw = {k: row[v] if v < len(row) else '' for k, v in header_map.items()}
+        
+        # Parse start and stop times
+        start_time = self.parse_datetime(raw.get('start_time'))
+        stop_time = self.parse_datetime(raw.get('stop_time'))
+        
+        # Calculate time taken if both times are available
+        time_taken = self.calculate_time_taken(start_time, stop_time) if start_time and stop_time else None
+        
         record = {
             'name': self.clean_string(raw.get('name')),
             'email': self.clean_string(raw.get('email')),
@@ -140,7 +167,9 @@ class SupabaseCSVIngester:
             'transport': self.clean_string(raw.get('transport')),
             'created_at': self.parse_datetime(raw.get('created_at')),
             'csv_url': self.clean_string(raw.get('csv_url')),
-            'notes': self.clean_string(raw.get('notes')),
+            'start_time': start_time,
+            'stop_time': stop_time,
+            'time_taken': time_taken,
             'complete': self.parse_boolean(raw.get('complete')),
             'has_csv': self.parse_boolean(raw.get('has_csv')),
             'has_probe_temp': self.parse_boolean(raw.get('has_probe_temp')),
@@ -199,7 +228,7 @@ class SupabaseCSVIngester:
 def main():
     SUPABASE_URL = "https://scpcfumxejgjoknxzxmf.supabase.co"
     SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNjcGNmdW14ZWpnam9rbnh6eG1mIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDgyODg5NTAsImV4cCI6MjA2Mzg2NDk1MH0.PgHEzgKiI9pdmM0jEx_gTlI2e0M-EnBXhztgueqpcKg"
-    CSV_FILE = "data/HistoricCSVSubmissions - Sheet1.csv"
+    CSV_FILE = "data/HistoricCSVSubmissions - SecondIteration.csv"
 
     ingester = SupabaseCSVIngester(SUPABASE_URL, SUPABASE_KEY)
     if not ingester.connect_to_supabase():

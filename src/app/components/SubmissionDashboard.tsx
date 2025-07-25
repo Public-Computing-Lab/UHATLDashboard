@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import {
   BarChart,
   Bar,
@@ -11,13 +11,14 @@ import {
   CartesianGrid,
   LabelList,
 } from "recharts";
+import { Search, Filter, X, ChevronDown, ChevronUp, RefreshCw } from "lucide-react";
 
 type DataPoint = {
   email: string;
   submission_datetime: string;
   device: string | null;
   transport: string | null;
-  complete_check: boolean;
+  complete: boolean;
   csv_check: boolean;
   temp_check: boolean;
   location_check: boolean;
@@ -26,16 +27,39 @@ type DataPoint = {
   num_records: number;
 };
 
+type SortConfig = {
+  key: keyof DataPoint | 'duration';
+  direction: 'asc' | 'desc';
+};
+
 export default function SubmissionDashboard() {
   const [data, setData] = useState<DataPoint[]>([]);
   const [loading, setLoading] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [sortConfig, setSortConfig] = useState<SortConfig | null>(null);
+  
+  // Server-side filters
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [startTime, setStartTime] = useState("");
   const [endTime, setEndTime] = useState("");
   const [transportFilter, setTransportFilter] = useState<string | null>(null);
+  const [completionFilter, setCompletionFilter] = useState<string | null>(null);
+  const [emailFilter, setEmailFilter] = useState("");
+  const [minRecords, setMinRecords] = useState("");
+  const [maxRecords, setMaxRecords] = useState("");
+  const [dataStartDate, setDataStartDate] = useState("");
+  const [dataEndDate, setDataEndDate] = useState("");
+  const [dataStartTime, setDataStartTime] = useState("");
+  const [dataEndTime, setDataEndTime] = useState("");
+  const [validationFilters, setValidationFilters] = useState({
+    csv: null as string | null,
+    temp: null as string | null,
+    location: null as string | null
+  });
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
@@ -44,6 +68,17 @@ export default function SubmissionDashboard() {
       if (startTime) params.append("startTime", startTime);
       if (endTime) params.append("endTime", endTime);
       if (transportFilter) params.append("transportFilter", transportFilter);
+      if (completionFilter) params.append("completionStatus", completionFilter);
+      if (emailFilter) params.append("emailSearch", emailFilter);
+      if (minRecords) params.append("minRecords", minRecords);
+      if (maxRecords) params.append("maxRecords", maxRecords);
+      if (dataStartDate) params.append("dataStartDate", dataStartDate);
+      if (dataEndDate) params.append("dataEndDate", dataEndDate);
+      if (dataStartTime) params.append("dataStartTime", dataStartTime);
+      if (dataEndTime) params.append("dataEndTime", dataEndTime);
+      if (validationFilters.csv) params.append("hasCSV", validationFilters.csv);
+      if (validationFilters.temp) params.append("hasTemp", validationFilters.temp);
+      if (validationFilters.location) params.append("hasLocation", validationFilters.location);
 
       const queryString = params.toString();
       const url = `https://scpcfumxejgjoknxzxmf.supabase.co/functions/v1/dashboard${queryString ? `?${queryString}` : ""}`;
@@ -51,36 +86,19 @@ export default function SubmissionDashboard() {
       const response = await fetch(url);
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
 
-      const raw = await response.json();
-      const normalized: DataPoint[] = raw.map((item: any) => ({
-        email: item.email,
-        submission_datetime: item.submission_datetime,
-        device: item.device ?? null,
-        transport: item.transport ?? null,
-        complete_check: item.complete === true || item.complete === "TRUE",
-        csv_check: item.csv_check === true || item.csv_check === "TRUE",
-        temp_check: item.temp_check === true || item.temp_check === "TRUE",
-        location_check: item.location_check === true || item.location_check === "TRUE",
-        start_time: item.start_time ?? null,
-        stop_time: item.stop_time ?? null,
-        num_records: typeof item.num_records === "number" ? item.num_records : parseInt(item.num_records || "0"),
-      }));
-
-      setData(normalized);
+      const result = await response.json();
+      setData(result);
     } catch (error) {
       console.error("Error fetching data:", error);
     } finally {
       setLoading(false);
     }
-  };
+  }, [startDate, endDate, startTime, endTime, transportFilter, completionFilter, emailFilter, minRecords, maxRecords, dataStartDate, dataEndDate, dataStartTime, dataEndTime, validationFilters]);
 
+  // Initial data load only
   useEffect(() => {
     fetchData();
-  }, []);
-
-  useEffect(() => {
-    fetchData();
-  }, [startDate, endDate, startTime, endTime, transportFilter]);
+  }, []); // Empty dependency array - only runs once on mount
 
   const clearFilters = () => {
     setStartDate("");
@@ -88,80 +106,390 @@ export default function SubmissionDashboard() {
     setStartTime("");
     setEndTime("");
     setTransportFilter(null);
+    setCompletionFilter(null);
+    setEmailFilter("");
+    setMinRecords("");
+    setMaxRecords("");
+    setDataStartDate("");
+    setDataEndDate("");
+    setDataStartTime("");
+    setDataEndTime("");
+    setValidationFilters({ csv: null, temp: null, location: null });
+    setSearchTerm("");
+    setSortConfig(null);
   };
 
-  const errorCounts = [
-    { name: "Incomplete", value: data.filter((d) => !d.complete_check).length },
-    { name: "Missing CSV", value: data.filter((d) => !d.csv_check).length },
-    { name: "Missing Temp", value: data.filter((d) => !d.temp_check).length },
-    { name: "Missing Location", value: data.filter((d) => !d.location_check).length },
-  ];
+  const applyFilters = () => {
+    fetchData();
+  };
+
+  // Client-side filtering and sorting
+  const filteredAndSortedData = useMemo(() => {
+    let filtered = data.filter((item) => {
+      if (!searchTerm) return true;
+      const search = searchTerm.toLowerCase();
+      return (
+        item.email.toLowerCase().includes(search) ||
+        (item.transport?.toLowerCase() || "").includes(search) ||
+        (item.device?.toLowerCase() || "").includes(search) ||
+        item.submission_datetime.toLowerCase().includes(search)
+      );
+    });
+
+    if (sortConfig) {
+      filtered.sort((a, b) => {
+        let aValue: any;
+        let bValue: any;
+
+        if (sortConfig.key === 'duration') {
+          const aStart = a.start_time ? new Date(a.start_time) : null;
+          const aStop = a.stop_time ? new Date(a.stop_time) : null;
+          const bStart = b.start_time ? new Date(b.start_time) : null;
+          const bStop = b.stop_time ? new Date(b.stop_time) : null;
+          
+          aValue = aStart && aStop ? aStop.getTime() - aStart.getTime() : 0;
+          bValue = bStart && bStop ? bStop.getTime() - bStart.getTime() : 0;
+        } else {
+          aValue = a[sortConfig.key];
+          bValue = b[sortConfig.key];
+        }
+
+        if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
+        if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
+        return 0;
+      });
+    }
+
+    return filtered;
+  }, [data, searchTerm, sortConfig]);
+
+  const handleSort = (key: keyof DataPoint | 'duration') => {
+    setSortConfig(current => {
+      if (current?.key === key) {
+        return current.direction === 'asc' 
+          ? { key, direction: 'desc' }
+          : null;
+      }
+      return { key, direction: 'asc' };
+    });
+  };
+
+  const getSortIcon = (key: keyof DataPoint | 'duration') => {
+    if (sortConfig?.key !== key) return null;
+    return sortConfig.direction === 'asc' ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />;
+  };
+
+  // Calculate statistics
+  const stats = useMemo(() => {
+    const totalRecords = filteredAndSortedData.reduce((sum, d) => sum + d.num_records, 0);
+    const totalHours = filteredAndSortedData.reduce((sum, d) => {
+      const start = d.start_time ? new Date(d.start_time) : null;
+      const stop = d.stop_time ? new Date(d.stop_time) : null;
+      if (!start || !stop || isNaN(start.getTime()) || isNaN(stop.getTime())) return sum;
+      return sum + (stop.getTime() - start.getTime());
+    }, 0) / (1000 * 60 * 60);
+    
+    const uniqueContributors = new Set(filteredAndSortedData.map(d => d.email)).size;
+    const totalSubmissions = filteredAndSortedData.length;
+    const incompleteSubmissions = filteredAndSortedData.filter(d => !d.complete).length;
+
+    return { totalRecords, totalHours, uniqueContributors, totalSubmissions, incompleteSubmissions };
+  }, [filteredAndSortedData]);
+
+  const errorCounts = useMemo(() => [
+    { name: "Incomplete", value: filteredAndSortedData.filter((d) => !d.complete).length },
+    { name: "Missing CSV", value: filteredAndSortedData.filter((d) => !d.csv_check).length },
+    { name: "Missing Temp", value: filteredAndSortedData.filter((d) => !d.temp_check).length },
+    { name: "Missing Location", value: filteredAndSortedData.filter((d) => !d.location_check).length },
+  ], [filteredAndSortedData]);
 
   return (
     <main className="flex flex-col min-h-screen p-6 max-w-7xl mx-auto space-y-8">
-      <h1 className="text-3xl font-semibold text-gray-800">Submissions Dashboard</h1>
+      <div className="flex justify-between items-center">
+        <h1 className="text-3xl font-semibold text-gray-800">Submissions Dashboard</h1>
+        <div className="text-sm text-gray-600">
+          Showing {filteredAndSortedData.length} of {data.length} submissions
+        </div>
+      </div>
 
-      <section className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6">
-          <h2 className="text-lg font-semibold mb-4 text-gray-800">Submission Overview</h2>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-6 text-center text-gray-800">
-            <div>
-              <p className="text-2xl font-bold">{data.reduce((sum, d) => sum + d.num_records, 0).toLocaleString()}</p>
-              <p className="text-sm text-gray-500">Number of Temp Records</p>
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{(
-                data.reduce((sum, d) => {
-                  const start = d.start_time ? new Date(d.start_time) : null;
-                  const stop = d.stop_time ? new Date(d.stop_time) : null;
-                  if (!start || !stop || isNaN(start.getTime()) || isNaN(stop.getTime())) return sum;
-                  return sum + (stop.getTime() - start.getTime());
-                }, 0) / (1000 * 60 * 60)).toLocaleString()}</p>
-              <p className="text-sm text-gray-500">Hours of Data</p>
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{new Set(data.map((d) => d.email)).size.toLocaleString()}</p>
-              <p className="text-sm text-gray-500">Individual Contributors</p>
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{data.length.toLocaleString()}</p>
-              <p className="text-sm text-gray-500">Number of Submissions</p>
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{data.filter((d) => !d.complete_check).length.toLocaleString()}</p>
-              <p className="text-sm text-gray-500">Incomplete Submissions</p>
-            </div>
+      {/* Statistics Overview */}
+      <section className="bg-white rounded-lg border border-gray-200 shadow-sm p-6">
+        <h2 className="text-lg font-semibold mb-4 text-gray-800">Overview</h2>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 text-center text-gray-800">
+          <div className="min-w-[100px]">
+            <p className="text-xl font-bold break-words">{stats.totalRecords.toLocaleString()}</p>
+            <p className="text-xs text-gray-500 leading-tight">Temperature Records</p>
+          </div>
+          <div className="min-w-[100px]">
+            <p className="text-xl font-bold break-words">
+              {stats.totalHours.toLocaleString(undefined, { maximumFractionDigits: 1 })}
+            </p>
+            <p className="text-xs text-gray-500 leading-tight">Hours of Data</p>
+          </div>
+          <div className="min-w-[100px]">
+            <p className="text-xl font-bold">{stats.uniqueContributors.toLocaleString()}</p>
+            <p className="text-xs text-gray-500 leading-tight">Contributors</p>
+          </div>
+          <div className="min-w-[100px]">
+            <p className="text-xl font-bold">{stats.totalSubmissions.toLocaleString()}</p>
+            <p className="text-xs text-gray-500 leading-tight">Submissions</p>
+          </div>
+          <div className="min-w-[100px]">
+            <p className="text-xl font-bold text-red-600">{stats.incompleteSubmissions.toLocaleString()}</p>
+            <p className="text-xs text-gray-500 leading-tight">Issues</p>
+          </div>
+        </div>
+      </section>
+
+      {/* Filters Section */}
+      <section className="bg-white rounded-lg border border-gray-200 shadow-sm p-6">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-lg font-semibold text-gray-800">Filters</h2>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
+              className="flex items-center gap-2 px-3 py-1 text-sm border rounded hover:bg-gray-50"
+            >
+              <Filter className="w-4 h-4" />
+              Advanced
+            </button>
+            <button
+              onClick={applyFilters}
+              className="flex items-center gap-2 px-4 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
+              disabled={loading}
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              Apply Changes
+            </button>
+            <button
+              onClick={clearFilters}
+              className="flex items-center gap-2 px-3 py-1 text-sm bg-gray-200 rounded hover:bg-gray-300"
+              disabled={loading}
+            >
+              <X className="w-4 h-4" />
+              Clear All
+            </button>
           </div>
         </div>
 
-        <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6">
-          <h2 className="text-lg font-semibold mb-4 text-gray-800">Filter</h2>
-          <div className="grid grid-cols-2 gap-4 mb-4">
-            <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="border rounded px-2 py-1 text-sm w-full" disabled={loading} />
-            <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="border rounded px-2 py-1 text-sm w-full" disabled={loading} />
-            <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} className="border rounded px-2 py-1 text-sm w-full" disabled={loading} />
-            <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} className="border rounded px-2 py-1 text-sm w-full" disabled={loading} />
+        {/* Quick Filters */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Search submissions..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-10 pr-4 py-2 border rounded-lg text-sm"
+            />
           </div>
-          <div className="flex flex-wrap gap-2 mb-4">
+          
+          <div className="flex gap-2">
             {["Walking", "Cycling", "Driving", "Other"].map((type) => (
               <button
                 key={type}
                 onClick={() => setTransportFilter(type === transportFilter ? null : type)}
-                className={`px-3 py-1 border rounded text-sm ${transportFilter === type ? "bg-blue-500 text-white" : "bg-gray-100"} ${loading ? "opacity-50 cursor-not-allowed" : ""}`}
+                className={`px-3 py-2 border rounded text-sm ${
+                  transportFilter === type ? "bg-blue-500 text-white" : "bg-gray-100 hover:bg-gray-200"
+                } ${loading ? "opacity-50 cursor-not-allowed" : ""}`}
                 disabled={loading}
               >
                 {type}
               </button>
             ))}
           </div>
-          <button onClick={clearFilters} className={`w-full py-2 rounded bg-gray-300 text-sm font-semibold hover:bg-gray-400 transition ${loading ? "opacity-50 cursor-not-allowed" : ""}`} disabled={loading}>
-            {loading ? "Loading..." : "Clear Filters"}
-          </button>
+
+          <div className="flex gap-2">
+            {[
+              { key: "complete", label: "Complete" },
+              { key: "incomplete", label: "Issues" }
+            ].map((status) => (
+              <button
+                key={status.key}
+                onClick={() => setCompletionFilter(status.key === completionFilter ? null : status.key)}
+                className={`px-3 py-2 border rounded text-sm ${
+                  completionFilter === status.key 
+                    ? status.key === "complete" ? "bg-green-500 text-white" : "bg-red-500 text-white"
+                    : "bg-gray-100 hover:bg-gray-200"
+                } ${loading ? "opacity-50 cursor-not-allowed" : ""}`}
+                disabled={loading}
+              >
+                {status.label}
+              </button>
+            ))}
+          </div>
         </div>
+
+        {/* Advanced Filters */}
+        {showAdvancedFilters && (
+          <div className="border-t pt-4 space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">Submission Date Range</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="border rounded px-2 py-1 text-sm"
+                    disabled={loading}
+                  />
+                  <input
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="border rounded px-2 py-1 text-sm"
+                    disabled={loading}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1">Submission Time Range</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="time"
+                    value={startTime}
+                    onChange={(e) => setStartTime(e.target.value)}
+                    className="border rounded px-2 py-1 text-sm"
+                    disabled={loading}
+                    step="1"
+                  />
+                  <input
+                    type="time"
+                    value={endTime}
+                    onChange={(e) => setEndTime(e.target.value)}
+                    className="border rounded px-2 py-1 text-sm"
+                    disabled={loading}
+                    step="1"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1">Data Collection Date Range</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="date"
+                    value={dataStartDate}
+                    onChange={(e) => setDataStartDate(e.target.value)}
+                    className="border rounded px-2 py-1 text-sm"
+                    disabled={loading}
+                  />
+                  <input
+                    type="date"
+                    value={dataEndDate}
+                    onChange={(e) => setDataEndDate(e.target.value)}
+                    className="border rounded px-2 py-1 text-sm"
+                    disabled={loading}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1">Data Collection Time Range</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="time"
+                    value={dataStartTime}
+                    onChange={(e) => setDataStartTime(e.target.value)}
+                    className="border rounded px-2 py-1 text-sm"
+                    disabled={loading}
+                    step="1"
+                  />
+                  <input
+                    type="time"
+                    value={dataEndTime}
+                    onChange={(e) => setDataEndTime(e.target.value)}
+                    className="border rounded px-2 py-1 text-sm"
+                    disabled={loading}
+                    step="1"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">Record Count</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="number"
+                    placeholder="Min"
+                    value={minRecords}
+                    onChange={(e) => setMinRecords(e.target.value)}
+                    className="border rounded px-2 py-1 text-sm"
+                    disabled={loading}
+                  />
+                  <input
+                    type="number"
+                    placeholder="Max"
+                    value={maxRecords}
+                    onChange={(e) => setMaxRecords(e.target.value)}
+                    className="border rounded px-2 py-1 text-sm"
+                    disabled={loading}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1">Email Filter</label>
+                <input
+                  type="text"
+                  placeholder="Filter by email..."
+                  value={emailFilter}
+                  onChange={(e) => setEmailFilter(e.target.value)}
+                  className="w-full border rounded px-2 py-1 text-sm"
+                  disabled={loading}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-2">Validation Checks</label>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {[
+                  { key: "csv", label: "CSV File" },
+                  { key: "temp", label: "Temperature Data" },
+                  { key: "location", label: "Location Data" }
+                ].map((check) => (
+                  <div key={check.key} className="flex gap-2">
+                    <button
+                      onClick={() => setValidationFilters(prev => ({
+                        ...prev,
+                        [check.key]: prev[check.key as keyof typeof prev] === "true" ? null : "true"
+                      }))}
+                      className={`px-3 py-1 border rounded text-sm ${
+                        validationFilters[check.key as keyof typeof validationFilters] === "true"
+                          ? "bg-green-500 text-white" : "bg-gray-100"
+                      }`}
+                    >
+                      Has {check.label}
+                    </button>
+                    <button
+                      onClick={() => setValidationFilters(prev => ({
+                        ...prev,
+                        [check.key]: prev[check.key as keyof typeof prev] === "false" ? null : "false"
+                      }))}
+                      className={`px-3 py-1 border rounded text-sm ${
+                        validationFilters[check.key as keyof typeof validationFilters] === "false"
+                          ? "bg-red-500 text-white" : "bg-gray-100"
+                      }`}
+                    >
+                      Missing {check.label}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </section>
 
-      <section className="bg-white rounded-lg border border-gray-200 shadow-sm p-6 text-gray-700">
-        <h2 className="text-lg font-semibold mb-4">Common Submission Errors</h2>
+      {/* Error Chart */}
+      <section className="bg-white rounded-lg border border-gray-200 shadow-sm p-6">
+        <h2 className="text-lg font-semibold mb-4 text-gray-800">Submission Issues</h2>
         <ResponsiveContainer width="100%" height={250}>
           <BarChart layout="vertical" data={errorCounts} margin={{ left: 40 }}>
             <CartesianGrid strokeDasharray="3 3" />
@@ -175,45 +503,178 @@ export default function SubmissionDashboard() {
         </ResponsiveContainer>
       </section>
 
-      <section className="bg-white rounded-lg border border-gray-200 shadow-md p-4 max-h-[400px] overflow-y-auto">
-        <h2 className="text-lg font-semibold mb-4 text-gray-800">Latest Submissions</h2>
-        {loading && (
-          <div className="flex justify-center items-center py-8">
-            <div className="text-gray-500">Loading...</div>
+      {/* Submissions Table */}
+      <section className="bg-white rounded-lg border border-gray-200 shadow-md">
+        <div className="p-4 border-b">
+          <h2 className="text-lg font-semibold text-gray-800">Submissions</h2>
+        </div>
+        
+        <div className="max-h-[500px] overflow-auto">
+          {loading ? (
+            <div className="flex justify-center items-center py-8 text-gray-500">Loading...</div>
+          ) : (
+            <table className="min-w-full text-sm text-left text-gray-700">
+              <thead className="bg-blue-50 sticky top-0 z-10 text-xs uppercase tracking-wide text-gray-600">
+                <tr>
+                  <th 
+                    className="px-4 py-3 border-b cursor-pointer hover:bg-blue-100 select-none"
+                    onClick={() => handleSort('email')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Email
+                      {getSortIcon('email')}
+                    </div>
+                  </th>
+                  <th 
+                    className="px-4 py-3 border-b cursor-pointer hover:bg-blue-100 select-none"
+                    onClick={() => handleSort('submission_datetime')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Submitted
+                      {getSortIcon('submission_datetime')}
+                    </div>
+                  </th>
+                  <th 
+                    className="px-4 py-3 border-b cursor-pointer hover:bg-blue-100 select-none"
+                    onClick={() => handleSort('transport')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Transport
+                      {getSortIcon('transport')}
+                    </div>
+                  </th>
+                  <th className="px-4 py-3 border-b">Complete</th>
+                  <th className="px-4 py-3 border-b">CSV</th>
+                  <th className="px-4 py-3 border-b">Temp</th>
+                  <th className="px-4 py-3 border-b">Location</th>
+                  <th 
+                    className="px-4 py-3 border-b cursor-pointer hover:bg-blue-100 select-none"
+                    onClick={() => handleSort('start_time')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Start Time
+                      {getSortIcon('start_time')}
+                    </div>
+                  </th>
+                  <th 
+                    className="px-4 py-3 border-b cursor-pointer hover:bg-blue-100 select-none"
+                    onClick={() => handleSort('stop_time')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Stop Time
+                      {getSortIcon('stop_time')}
+                    </div>
+                  </th>
+                  <th 
+                    className="px-4 py-3 border-b cursor-pointer hover:bg-blue-100 select-none text-right"
+                    onClick={() => handleSort('num_records')}
+                  >
+                    <div className="flex items-center gap-1 justify-end">
+                      Records
+                      {getSortIcon('num_records')}
+                    </div>
+                  </th>
+                  <th 
+                    className="px-4 py-3 border-b cursor-pointer hover:bg-blue-100 select-none text-right"
+                    onClick={() => handleSort('duration')}
+                  >
+                    <div className="flex items-center gap-1 justify-end">
+                      Duration (mins)
+                      {getSortIcon('duration')}
+                    </div>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredAndSortedData.map((row, idx) => {
+                  const duration = row.start_time && row.stop_time ? 
+                    (new Date(row.stop_time).getTime() - new Date(row.start_time).getTime()) / (1000 * 60) : 0;
+                  
+                  return (
+                    <tr key={idx} className="even:bg-gray-50 hover:bg-gray-100 transition-colors duration-100">
+                      <td className="px-4 py-2 border-b" title={row.email}>
+                        <div className="max-w-[200px] truncate">
+                          {row.email}
+                        </div>
+                      </td>
+                      <td className="px-4 py-2 border-b">
+                        <div className="text-xs">
+                          {new Date(row.submission_datetime).toLocaleDateString()}
+                          <br />
+                          {new Date(row.submission_datetime).toLocaleTimeString()}
+                        </div>
+                      </td>
+                      <td className="px-4 py-2 border-b">
+                        <span className={`px-2 py-1 rounded-full text-xs ${
+                          row.transport === 'Walking' ? 'bg-green-100 text-green-800' :
+                          row.transport === 'Cycling' ? 'bg-blue-100 text-blue-800' :
+                          row.transport === 'Driving' ? 'bg-yellow-100 text-yellow-800' :
+                          'bg-gray-100 text-gray-800'
+                        }`}>
+                          {row.transport || "—"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2 border-b text-center">
+                        <span className={`text-lg ${row.complete ? 'text-green-600' : 'text-red-600'}`}>
+                          {row.complete ? "✓" : "✗"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2 border-b text-center">
+                        <span className={`text-lg ${row.csv_check ? 'text-green-600' : 'text-red-600'}`}>
+                          {row.csv_check ? "✓" : "✗"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2 border-b text-center">
+                        <span className={`text-lg ${row.temp_check ? 'text-green-600' : 'text-red-600'}`}>
+                          {row.temp_check ? "✓" : "✗"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2 border-b text-center">
+                        <span className={`text-lg ${row.location_check ? 'text-green-600' : 'text-red-600'}`}>
+                          {row.location_check ? "✓" : "✗"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2 border-b">
+                        <div className="text-xs">
+                          {row.start_time ? (
+                            <>
+                              {new Date(row.start_time).toLocaleDateString()}
+                              <br />
+                              {new Date(row.start_time).toLocaleTimeString()}
+                            </>
+                          ) : "—"}
+                        </div>
+                      </td>
+                      <td className="px-4 py-2 border-b">
+                        <div className="text-xs">
+                          {row.stop_time ? (
+                            <>
+                              {new Date(row.stop_time).toLocaleDateString()}
+                              <br />
+                              {new Date(row.stop_time).toLocaleTimeString()}
+                            </>
+                          ) : "—"}
+                        </div>
+                      </td>
+                      <td className="px-4 py-2 border-b text-right font-mono">
+                        {row.num_records.toLocaleString()}
+                      </td>
+                      <td className="px-4 py-2 border-b text-right font-mono">
+                        {duration > 0 ? duration.toFixed(1) : "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+        
+        {filteredAndSortedData.length === 0 && !loading && (
+          <div className="text-center py-8 text-gray-500">
+            No submissions match your current filters
           </div>
         )}
-        <table className="min-w-full text-sm text-left text-gray-700 border-collapse">
-          <thead className="bg-blue-50 sticky top-0 z-10 text-xs uppercase tracking-wide text-gray-600">
-            <tr>
-              <th className="px-4 py-2 border-b">Email</th>
-              <th className="px-4 py-2 border-b">Submitted At</th>
-              <th className="px-4 py-2 border-b">Transport</th>
-              <th className="px-4 py-2 border-b">Complete</th>
-              <th className="px-4 py-2 border-b">CSV</th>
-              <th className="px-4 py-2 border-b">Temp</th>
-              <th className="px-4 py-2 border-b">Location</th>
-              <th className="px-4 py-2 border-b">Start Time</th>
-              <th className="px-4 py-2 border-b">Stop Time</th>
-              <th className="px-4 py-2 border-b text-right">Records</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.map((row, idx) => (
-              <tr key={idx} className="even:bg-gray-50 hover:bg-gray-100 transition-colors duration-100">
-                <td className="px-4 py-2 border-b">{row.email}</td>
-                <td className="px-4 py-2 border-b">{new Date(row.submission_datetime).toLocaleString()}</td>
-                <td className="px-4 py-2 border-b">{row.transport || "—"}</td>
-                <td className="px-4 py-2 border-b">{row.complete_check ? "✔️" : "—"}</td>
-                <td className="px-4 py-2 border-b">{row.csv_check ? "✔️" : "—"}</td>
-                <td className="px-4 py-2 border-b">{row.temp_check ? "✔️" : "—"}</td>
-                <td className="px-4 py-2 border-b">{row.location_check ? "✔️" : "—"}</td>
-                <td className="px-4 py-2 border-b">{row.start_time ? new Date(row.start_time).toLocaleString() : "—"}</td>
-                <td className="px-4 py-2 border-b">{row.stop_time ? new Date(row.stop_time).toLocaleString() : "—"}</td>
-                <td className="px-4 py-2 border-b text-right">{row.num_records}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
       </section>
     </main>
   );
