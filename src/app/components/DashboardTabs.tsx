@@ -18,7 +18,7 @@ export default function DashboardTabs() {
           className={`w-1/2 py-4 text-center font-semibold text-lg transition-colors duration-200 ${
             isSubmission
               ? "bg-[#b78fbf] text-black border-b-4 border-white"
-              : "bg-[#e5e5e5] text-gray-700 hover:bg-[#fcdcdc]"
+              : "bg-[#e5e5e5] text-gray-700 hover:bg-[#d4a7d8] hover:text-white"
           }`}
         >
           Submission Data
@@ -27,8 +27,8 @@ export default function DashboardTabs() {
           onClick={() => setActiveTab("temperature")}
           className={`w-1/2 py-4 text-center font-semibold text-lg transition-colors duration-200 ${
             !isSubmission
-              ? "bg-[#b78fbf] text-white border-b-4 border-white"
-              : "bg-[#cbd5e1] text-gray-800 hover:bg-[#1e3a8a]/90 hover:text-white"
+              ? "bg-[#2d4fb8] text-white border-b-4 border-white"
+              : "bg-[#cbd5e1] text-gray-800 hover:bg-[#2d4fb8] hover:text-white"
           }`}
         >
           Temperature Data

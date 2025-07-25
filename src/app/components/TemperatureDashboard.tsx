@@ -90,11 +90,11 @@ function TemperatureMarkers({ points }: { points: TemperaturePoint[] }) {
 // Helper function to get default dates
 function getDefaultDates() {
   const now = new Date();
-  const oneMonthAgo = new Date(now);
-  oneMonthAgo.setMonth(now.getMonth() - 1);
+  const threeMonthsAgo = new Date(now);
+  threeMonthsAgo.setMonth(now.getMonth() - 3);
   
   return {
-    startDate: oneMonthAgo.toISOString().split('T')[0],
+    startDate: threeMonthsAgo.toISOString().split('T')[0],
     endDate: now.toISOString().split('T')[0],
     currentTime: now.toTimeString().slice(0, 5) // HH:MM format
   };
@@ -106,8 +106,8 @@ export default function TemperatureDashboard() {
   const [startDate, setStartDate] = useState(defaultStartDate);
   const [endDate, setEndDate] = useState(defaultEndDate);
   const [startTime, setStartTime] = useState("");
-  const [endTime, setEndTime] = useState(currentTime);
-  const [transport, setTransport] = useState<string | null>("Walking");
+  const [endTime, setEndTime] = useState("");
+  const [transport, setTransport] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [lastResult, setLastResult] = useState<any>(null);
   const [temperaturePoints, setTemperaturePoints] = useState<TemperaturePoint[]>([]);
@@ -181,18 +181,23 @@ export default function TemperatureDashboard() {
 
   const fetchPoints = async (downloadCsv = false, isInitialLoad = false) => {
     const map = mapRef.current;
-    if (!map || !startDate || !endDate) {
+    if (!map) {
       if (!isInitialLoad) {
-        alert("Please select start and end dates");
+        alert("Map not ready");
       }
       return;
     }
 
     setLoading(true);
     const bounds = map.getBounds();
+    
+    // Use open-ended dates if not specified
+    const effectiveStartDate = startDate || '1900-01-01';
+    const effectiveEndDate = endDate || '2100-12-31';
+    
     const payload = {
-      startDate,
-      endDate,
+      startDate: effectiveStartDate,
+      endDate: effectiveEndDate,
       startTime,
       endTime,
       transport,
@@ -236,7 +241,7 @@ export default function TemperatureDashboard() {
       
       // Convert to CSV and download if requested
       if (downloadCsv && json.data && json.data.length > 0) {
-        const filename = `temperature_data_${startDate}_to_${endDate}${transport ? `_${transport}` : ''}.csv`;
+        const filename = `temperature_data_${effectiveStartDate}_to_${effectiveEndDate}${transport ? `_${transport}` : ''}.csv`;
         downloadCSV(json.data, filename);
       } else if (!isInitialLoad && json.data && json.data.length === 0) {
         alert("No data found for the selected criteria");
@@ -255,16 +260,24 @@ export default function TemperatureDashboard() {
     }
   };
 
-  // Auto-load data when map is ready and we haven't loaded yet
+  // Auto-load initial data when map is ready
   useEffect(() => {
     if (mapRef.current && !hasInitiallyLoaded && !loading) {
-      console.log("Auto-loading initial data...");
+      console.log("Auto-loading initial data with last 3 months...");
       fetchPoints(false, true);
     }
   }, [mapRef.current, hasInitiallyLoaded, loading]);
 
-  const loadDataOnly = () => fetchPoints(false);
-  const downloadData = () => fetchPoints(true);
+  const applyFilters = () => fetchPoints(false);
+  const downloadCurrentPoints = () => {
+    if (temperaturePoints.length > 0) {
+      const filename = `current_temperature_data_${new Date().toISOString().split('T')[0]}.csv`;
+      downloadCSV(temperaturePoints, filename);
+    } else {
+      alert("No data currently loaded on map");
+    }
+  };
+  const downloadWithFilters = () => fetchPoints(true);
 
   // Clear points from map
   const clearPoints = () => {
@@ -274,13 +287,15 @@ export default function TemperatureDashboard() {
 
   // Reset to defaults
   const resetToDefaults = () => {
-    const { startDate: newStartDate, endDate: newEndDate, currentTime: newCurrentTime } = getDefaultDates();
+    const { startDate: newStartDate, endDate: newEndDate } = getDefaultDates();
     setStartDate(newStartDate);
     setEndDate(newEndDate);
     setStartTime("");
-    setEndTime(newCurrentTime);
-    setTransport("Walking");
-    setMapStyle("minimal");
+    setEndTime("");
+    setTransport(null);
+    setMapStyle("clean");
+    setTemperaturePoints([]);
+    setLastResult(null);
     setHasInitiallyLoaded(false); // This will trigger auto-load with new defaults
   };
 
@@ -311,7 +326,7 @@ export default function TemperatureDashboard() {
         {/* Filter UI */}
         <div className="bg-white text-gray-800 p-6 rounded-lg border border-gray-200 shadow-sm">
           <div className="flex justify-between items-center mb-4">
-            <h2 className="text-lg font-semibold text-gray-800">Filter</h2>
+            <h2 className="text-lg font-semibold text-gray-800">Filters</h2>
             <button
               onClick={resetToDefaults}
               className="text-xs px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded transition-colors"
@@ -323,21 +338,23 @@ export default function TemperatureDashboard() {
           {/* Date inputs */}
           <div className="grid grid-cols-2 gap-4 mb-4">
             <div>
-              <label className="block text-xs text-gray-600 mb-1">Start Date</label>
+              <label className="block text-xs text-gray-600 mb-1">Start Date (optional)</label>
               <input 
                 type="date" 
                 value={startDate} 
                 onChange={(e) => setStartDate(e.target.value)} 
                 className="border rounded px-2 py-1 text-sm w-full" 
+                placeholder="Leave empty for open start"
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-600 mb-1">End Date</label>
+              <label className="block text-xs text-gray-600 mb-1">End Date (optional)</label>
               <input 
                 type="date" 
                 value={endDate} 
                 onChange={(e) => setEndDate(e.target.value)} 
                 className="border rounded px-2 py-1 text-sm w-full" 
+                placeholder="Leave empty for open end"
               />
             </div>
           </div>
@@ -355,7 +372,7 @@ export default function TemperatureDashboard() {
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-600 mb-1">End Time</label>
+              <label className="block text-xs text-gray-600 mb-1">End Time (optional)</label>
               <input 
                 type="time" 
                 value={endTime} 
@@ -392,7 +409,7 @@ export default function TemperatureDashboard() {
 
           {/* Map display toggle */}
           <div className="mb-4 space-y-3">
-            <label className="flex items-center gap-2 text-sm">
+            {/* <label className="flex items-center gap-2 text-sm">
               <input
                 type="checkbox"
                 checked={showOnMap}
@@ -400,7 +417,7 @@ export default function TemperatureDashboard() {
                 className="rounded"
               />
               Show points on map
-            </label>
+            </label> */}
             
             {/* Map style selector */}
             <div>
@@ -423,48 +440,70 @@ export default function TemperatureDashboard() {
             </div>
           </div>
 
-          {/* Action buttons */}
+          {/* Primary Apply button */}
           <div className="space-y-2">
             <button
-              onClick={loadDataOnly}
-              disabled={loading || !startDate || !endDate}
-              className={`w-full py-2 rounded font-semibold transition ${
-                loading || !startDate || !endDate
-                  ? "bg-gray-400 text-gray-200 cursor-not-allowed"
-                  : "bg-green-600 text-white hover:bg-green-700"
-              }`}
-            >
-              {loading ? "Loading..." : "Load Data on Map"}
-            </button>
-            
-            <button
-              onClick={downloadData}
-              disabled={loading || !startDate || !endDate}
-              className={`w-full py-2 rounded font-semibold transition ${
-                loading || !startDate || !endDate
+              onClick={applyFilters}
+              disabled={loading}
+              className={`w-full py-3 rounded-lg font-semibold transition text-lg ${
+                loading
                   ? "bg-gray-400 text-gray-200 cursor-not-allowed"
                   : "bg-blue-600 text-white hover:bg-blue-700"
               }`}
             >
-              Download CSV
+              {loading ? (
+                <div className="flex items-center justify-center gap-2">
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  Loading...
+                </div>
+              ) : (
+                "Apply Filters"
+              )}
             </button>
+            
+            {/* Download buttons */}
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={downloadCurrentPoints}
+                disabled={temperaturePoints.length === 0 || loading}
+                className={`py-2 rounded font-medium transition text-sm ${
+                  temperaturePoints.length === 0 || loading
+                    ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                    : "bg-green-600 text-white hover:bg-green-700"
+                }`}
+              >
+                Download Current ({temperaturePoints.length})
+              </button>
+              
+              <button
+                onClick={downloadWithFilters}
+                disabled={loading}
+                className={`py-2 rounded font-medium transition text-sm ${
+                  loading
+                    ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                    : "bg-orange-600 text-white hover:bg-orange-700"
+                }`}
+              >
+                Download All (Filtered)
+              </button>
+            </div>
 
             {temperaturePoints.length > 0 && (
               <button
                 onClick={clearPoints}
-                className="w-full py-2 rounded font-semibold transition bg-red-600 text-white hover:bg-red-700"
+                className="w-full py-2 rounded font-medium transition text-sm bg-red-600 text-white hover:bg-red-700"
               >
                 Clear Map
               </button>
             )}
           </div>
 
-          {/* Auto-load indicator */}
+          {/* Loading indicator for initial load */}
           {!hasInitiallyLoaded && (
-            <div className="mt-4 p-2 bg-blue-50 rounded text-sm text-blue-700">
+            <div className="mt-4 p-3 bg-blue-50 rounded text-sm text-blue-700">
               <div className="flex items-center gap-2">
                 <div className="w-4 h-4 border-2 border-blue-300 border-t-blue-600 rounded-full animate-spin"></div>
-                Auto-loading data with defaults...
+                Loading last 3 months of data...
               </div>
             </div>
           )}
