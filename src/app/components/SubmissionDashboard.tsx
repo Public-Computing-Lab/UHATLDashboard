@@ -95,10 +95,10 @@ export default function SubmissionDashboard() {
     }
   }, [startDate, endDate, startTime, endTime, transportFilter, completionFilter, emailFilter, minRecords, maxRecords, dataStartDate, dataEndDate, dataStartTime, dataEndTime, validationFilters]);
 
-  // Initial data load only
+  // Load initial data only once on component mount
   useEffect(() => {
     fetchData();
-  }, [fetchData]); // Add fetchData to dependencies
+  }, []); // Empty dependency array - only runs once on mount
 
   const clearFilters = () => {
     setStartDate("");
@@ -119,6 +119,7 @@ export default function SubmissionDashboard() {
     setSortConfig(null);
   };
 
+  // Only call fetchData when user clicks "Apply Changes"
   const applyFilters = () => {
     fetchData();
   };
@@ -138,8 +139,8 @@ export default function SubmissionDashboard() {
 
     if (sortConfig) {
       filtered.sort((a, b) => {
-        let aValue: any;
-        let bValue: any;
+        let aValue: string | number;
+        let bValue: string | number;
 
         if (sortConfig.key === 'duration') {
           const aStart = a.start_time ? new Date(a.start_time) : null;
