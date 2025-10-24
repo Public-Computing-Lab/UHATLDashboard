@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
 import "leaflet/dist/leaflet.css";
 import type { Map as LeafletMap } from "leaflet";
-import { supabase } from '@/lib/supabase';
+import { createClient } from '@/lib/supabase';
 import { useMap } from "react-leaflet";
 
 const MapContainer = dynamic(() => import("react-leaflet").then(m => m.MapContainer), { ssr: false });
@@ -114,6 +114,7 @@ export default function TemperatureDashboard() {
   const [hasInitiallyLoaded, setHasInitiallyLoaded] = useState(false);
   const [mapStyle, setMapStyle] = useState<keyof typeof mapStyles>("clean");
   const mapRef = useRef<LeafletMap | null>(null);
+  const supabase = createClient();
 
   // Map style options
   const mapStyles = {

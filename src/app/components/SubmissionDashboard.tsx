@@ -10,10 +10,15 @@ import {
   ResponsiveContainer,
   CartesianGrid,
   LabelList,
+  PieChart,
+  Pie,
+  Cell,
+  Legend,
 } from "recharts";
-import { Search, Filter, X, ChevronDown, ChevronUp, RefreshCw } from "lucide-react";
+import { Search, Filter, X, ChevronDown, ChevronUp, RefreshCw, Download } from "lucide-react";
 
 type DataPoint = {
+  id: string;
   email: string;
   submission_datetime: string;
   device: string | null;
@@ -25,6 +30,7 @@ type DataPoint = {
   start_time: string | null;
   stop_time: string | null;
   num_records: number;
+  csv_url?: string; // Add csv_url to the type
 };
 
 type SortConfig = {
@@ -67,7 +73,13 @@ export default function SubmissionDashboard() {
       if (endDate) params.append("endDate", endDate);
       if (startTime) params.append("startTime", startTime);
       if (endTime) params.append("endTime", endTime);
-      if (transportFilter) params.append("transportFilter", transportFilter);
+      
+      // Map "Other" to a special value the backend can handle, or handle client-side
+      if (transportFilter && transportFilter !== "Other") {
+        params.append("transportFilter", transportFilter);
+      }
+      // If "Other" is selected, don't send transportFilter - we'll filter client-side
+      
       if (completionFilter) params.append("completionStatus", completionFilter);
       if (emailFilter) params.append("emailSearch", emailFilter);
       if (minRecords) params.append("minRecords", minRecords);
@@ -127,14 +139,34 @@ export default function SubmissionDashboard() {
   // Client-side filtering and sorting
   const filteredAndSortedData = useMemo(() => {
     const filtered = data.filter((item) => {
-      if (!searchTerm) return true;
-      const search = searchTerm.toLowerCase();
-      return (
-        item.email.toLowerCase().includes(search) ||
-        (item.transport?.toLowerCase() || "").includes(search) ||
-        (item.device?.toLowerCase() || "").includes(search) ||
-        item.submission_datetime.toLowerCase().includes(search)
-      );
+      // Search term filter
+      if (searchTerm) {
+        const search = searchTerm.toLowerCase();
+        const matches = (
+          item.email.toLowerCase().includes(search) ||
+          (item.transport?.toLowerCase() || "").includes(search) ||
+          (item.device?.toLowerCase() || "").includes(search) ||
+          item.submission_datetime.toLowerCase().includes(search)
+        );
+        if (!matches) return false;
+      }
+
+      // Transport filter - matching pie chart logic
+      if (transportFilter) {
+        const transport = item.transport?.toLowerCase() || '';
+        if (transportFilter === "Walking") {
+          if (!transport.includes('walk')) return false;
+        } else if (transportFilter === "Cycling") {
+          if (!transport.includes('cycl') && !transport.includes('bik')) return false;
+        } else if (transportFilter === "Other") {
+          // "Other" means NOT walking AND NOT cycling
+          if (transport.includes('walk') || transport.includes('cycl') || transport.includes('bik')) {
+            return false;
+          }
+        }
+      }
+
+      return true;
     });
 
     if (sortConfig) {
@@ -197,12 +229,153 @@ export default function SubmissionDashboard() {
     return { totalRecords, totalHours, uniqueContributors, totalSubmissions, incompleteSubmissions };
   }, [filteredAndSortedData]);
 
+  const transportData = useMemo(() => {
+    const counts = { Walking: 0, Cycling: 0, Other: 0 };
+    
+    filteredAndSortedData.forEach((d) => {
+      const transport = d.transport?.toLowerCase() || '';
+      const entries = d.num_records
+      if (transport.includes('walk')) {
+        counts.Walking = counts.Walking + entries;
+      } else if (transport.includes('cycl') || transport.includes('bik')) {
+        counts.Cycling = counts.Cycling + entries;
+      } else {
+        counts.Other = counts.Other + entries;
+      }
+    });
+
+    return [
+      { name: 'Walking', value: counts.Walking, color: '#10b981' },
+      { name: 'Cycling', value: counts.Cycling, color: '#3b82f6' },
+      { name: 'Other', value: counts.Other, color: '#6b7280' },
+    ].filter(item => item.value > 0);
+  }, [filteredAndSortedData]);
+
   const errorCounts = useMemo(() => [
     { name: "Incomplete", value: filteredAndSortedData.filter((d) => !d.complete).length },
     { name: "Missing CSV", value: filteredAndSortedData.filter((d) => !d.csv_check).length },
     { name: "Missing Temp", value: filteredAndSortedData.filter((d) => !d.temp_check).length },
     { name: "Missing Location", value: filteredAndSortedData.filter((d) => !d.location_check).length },
   ], [filteredAndSortedData]);
+
+  const [downloadingRows, setDownloadingRows] = useState<Set<number>>(new Set());
+
+  const handleDownloadCSV = async (row: DataPoint, rowIndex: number) => {
+    console.log('=== DOWNLOAD DEBUG START ===');
+    console.log('Download initiated for row:', row);
+    
+    if (!row.csv_check) {
+      alert('No CSV file available for this submission');
+      return;
+    }
+
+    // If no ID, try to use email and submission_datetime as identifier
+    if (!row.id && !row.email) {
+      alert('Cannot download: Missing submission identifier');
+      return;
+    }
+
+    setDownloadingRows(prev => new Set(prev).add(rowIndex));
+
+    try {
+      // Build request with available identifiers
+      const requestBody: {
+        submissionId?: string;
+        email?: string;
+        submission_datetime?: string;
+        csv_url?: string;
+      } = {};
+      
+      if (row.id) {
+        requestBody.submissionId = row.id;
+      } else {
+        // Fallback to email/datetime if no ID
+        requestBody.email = row.email;
+        requestBody.submission_datetime = row.submission_datetime;
+      }
+      
+      // If we have csv_url directly, we can use it
+      if (row.csv_url) {
+        requestBody.csv_url = row.csv_url;
+      }
+      
+      console.log('Request body:', requestBody);
+      
+      const url = 'https://scpcfumxejgjoknxzxmf.supabase.co/functions/v1/download-csv';
+      
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json'
+          // No Authorization header - function should allow anonymous access
+        },
+        body: JSON.stringify(requestBody)
+      });
+
+      console.log('Response status:', response.status);
+      
+      const responseText = await response.text();
+      console.log('Raw response text:', responseText);
+
+      let result;
+      try {
+        result = JSON.parse(responseText);
+      } catch (parseError) {
+        console.error('Failed to parse response as JSON:', parseError);
+        throw new Error(`Invalid response from server: ${responseText}`);
+      }
+
+      if (!response.ok) {
+        console.error('Error response:', result);
+        throw new Error(result.error || `Server returned ${response.status}`);
+      }
+
+      console.log('Parsed response:', result);
+
+      if (!result.url) {
+        throw new Error('No download URL in response');
+      }
+
+      // Fetch the actual file from the signed URL
+      console.log('Downloading file from signed URL...');
+      const fileResponse = await fetch(result.url);
+      
+      if (!fileResponse.ok) {
+        throw new Error(`Failed to download file: ${fileResponse.status} ${fileResponse.statusText}`);
+      }
+
+      const blob = await fileResponse.blob();
+      console.log('File downloaded, size:', blob.size, 'bytes');
+      
+      // Create download link
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = `${row.email.split('@')[0]}_${new Date(row.submission_datetime).toISOString().split('T')[0]}.csv`;
+      
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(downloadUrl);
+      
+      console.log('Download completed successfully');
+    } catch (error) {
+      console.error('Error downloading CSV:', error);
+      
+      // More detailed error message
+      if (error instanceof TypeError && error.message.includes('Failed to fetch')) {
+        alert('Network error: Unable to connect to the download service. Please verify:\n1. The edge function is deployed\n2. Your network connection is stable\n3. Check browser console for CORS errors');
+      } else {
+        alert(`Failed to download CSV file:\n${error instanceof Error ? error.message : 'Unknown error'}\n\nCheck the browser console for details.`);
+      }
+    } finally {
+      setDownloadingRows(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(rowIndex);
+        return newSet;
+      });
+    }
+  };
 
   return (
     <main className="flex flex-col min-h-screen p-6 max-w-7xl mx-auto space-y-8">
@@ -216,28 +389,55 @@ export default function SubmissionDashboard() {
       {/* Statistics Overview */}
       <section className="bg-white rounded-lg border border-gray-200 shadow-sm p-6">
         <h2 className="text-lg font-semibold mb-4 text-gray-800">Overview</h2>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 text-center text-gray-800">
-          <div className="min-w-[100px]">
-            <p className="text-xl font-bold break-words">{stats.totalRecords.toLocaleString()}</p>
-            <p className="text-xs text-gray-500 leading-tight">Temperature Records</p>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Stats Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-2 gap-4 text-center text-gray-800">
+            <div className="min-w-[100px]">
+              <p className="text-xl font-bold break-words">{stats.totalRecords.toLocaleString()}</p>
+              <p className="text-xs text-gray-500 leading-tight">Temperature Records</p>
+            </div>
+            <div className="min-w-[100px]">
+              <p className="text-xl font-bold break-words">
+                {stats.totalHours.toLocaleString(undefined, { maximumFractionDigits: 1 })}
+              </p>
+              <p className="text-xs text-gray-500 leading-tight">Hours of Data</p>
+            </div>
+            <div className="min-w-[100px]">
+              <p className="text-xl font-bold">{stats.uniqueContributors.toLocaleString()}</p>
+              <p className="text-xs text-gray-500 leading-tight">Contributors</p>
+            </div>
+            <div className="min-w-[100px]">
+              <p className="text-xl font-bold">{stats.totalSubmissions.toLocaleString()}</p>
+              <p className="text-xs text-gray-500 leading-tight">Submissions</p>
+            </div>
+            {/* <div className="min-w-[100px]">
+              <p className="text-xl font-bold text-red-600">{stats.incompleteSubmissions.toLocaleString()}</p>
+              <p className="text-xs text-gray-500 leading-tight">Issues</p>
+            </div> */}
           </div>
-          <div className="min-w-[100px]">
-            <p className="text-xl font-bold break-words">
-              {stats.totalHours.toLocaleString(undefined, { maximumFractionDigits: 1 })}
-            </p>
-            <p className="text-xs text-gray-500 leading-tight">Hours of Data</p>
-          </div>
-          <div className="min-w-[100px]">
-            <p className="text-xl font-bold">{stats.uniqueContributors.toLocaleString()}</p>
-            <p className="text-xs text-gray-500 leading-tight">Contributors</p>
-          </div>
-          <div className="min-w-[100px]">
-            <p className="text-xl font-bold">{stats.totalSubmissions.toLocaleString()}</p>
-            <p className="text-xs text-gray-500 leading-tight">Submissions</p>
-          </div>
-          <div className="min-w-[100px]">
-            <p className="text-xl font-bold text-red-600">{stats.incompleteSubmissions.toLocaleString()}</p>
-            <p className="text-xs text-gray-500 leading-tight">Issues</p>
+
+          {/* Transport Type Pie Chart */}
+          <div className="flex justify-center items-center">
+            <ResponsiveContainer width="100%" height={200}>
+              <PieChart>
+                <Pie
+                  data={transportData}
+                  cx="50%"
+                  cy="50%"
+                  labelLine={false}
+                  label={false}
+                  outerRadius={80}
+                  fill="#8884d8"
+                  dataKey="value"
+                >
+                  {transportData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
+                </Pie>
+                <Tooltip />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
           </div>
         </div>
       </section>
@@ -287,7 +487,7 @@ export default function SubmissionDashboard() {
           </div>
           
           <div className="flex gap-2">
-            {["Walking", "Cycling", "Driving", "Other"].map((type) => (
+            {["Walking", "Cycling", "Other"].map((type) => (
               <button
                 key={type}
                 onClick={() => setTransportFilter(type === transportFilter ? null : type)}
@@ -321,11 +521,7 @@ export default function SubmissionDashboard() {
             ))}
           </div>
         </div>
-
-        {/* Advanced Filters */}
-        {showAdvancedFilters && (
-          <div className="border-t pt-4 space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 border-t pt-4 space-y-4">
               <div>
                 <label className="block text-sm font-medium mb-1">Submission Date Range</label>
                 <div className="grid grid-cols-2 gap-2">
@@ -411,6 +607,9 @@ export default function SubmissionDashboard() {
               </div>
             </div>
 
+        {/* Advanced Filters */}
+        {showAdvancedFilters && (
+          <div className="border-t pt-4 space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               <div>
                 <label className="block text-sm font-medium mb-1">Record Count</label>
@@ -517,6 +716,7 @@ export default function SubmissionDashboard() {
             <table className="min-w-full text-sm text-left text-gray-700">
               <thead className="bg-blue-50 sticky top-0 z-10 text-xs uppercase tracking-wide text-gray-600">
                 <tr>
+                  <th className="px-4 py-3 border-b">Actions</th>
                   <th 
                     className="px-4 py-3 border-b cursor-pointer hover:bg-blue-100 select-none"
                     onClick={() => handleSort('email')}
@@ -593,6 +793,18 @@ export default function SubmissionDashboard() {
                   
                   return (
                     <tr key={idx} className="even:bg-gray-50 hover:bg-gray-100 transition-colors duration-100">
+                      <td className="px-4 py-2 border-b">
+                        <button
+                          onClick={() => handleDownloadCSV(row, idx)}
+                          disabled={!row.csv_check || downloadingRows.has(idx)}
+                          className={`p-1.5 rounded hover:bg-gray-200 transition-colors ${
+                            !row.csv_check ? 'opacity-30 cursor-not-allowed' : ''
+                          }`}
+                          title={row.csv_check ? 'Download CSV' : 'No CSV available'}
+                        >
+                          <Download className={`w-4 h-4 ${downloadingRows.has(idx) ? 'animate-pulse' : ''}`} />
+                        </button>
+                      </td>
                       <td className="px-4 py-2 border-b" title={row.email}>
                         <div className="max-w-[200px] truncate">
                           {row.email}
