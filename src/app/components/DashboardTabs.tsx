@@ -8,13 +8,32 @@ import { LogOut } from 'lucide-react';
 
 export default function DashboardTabs() {
   const [activeTab, setActiveTab] = useState<"submission" | "temperature">("submission");
+  const [loggingOut, setLoggingOut] = useState(false);
   const supabase = createClient();
   const router = useRouter();
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
-    router.push('/login');
-    router.refresh();
+    try {
+      setLoggingOut(true);
+      
+      // Sign out from Supabase
+      const { error } = await supabase.auth.signOut();
+      
+      if (error) {
+        console.error('Logout error:', error);
+        alert('Failed to logout. Please try again.');
+        return;
+      }
+      
+      // Force a hard navigation to clear all client state
+      window.location.href = '/login';
+      
+    } catch (error) {
+      console.error('Unexpected logout error:', error);
+      alert('An unexpected error occurred during logout.');
+    } finally {
+      setLoggingOut(false);
+    }
   };
 
   const isSubmission = activeTab === "submission";
@@ -47,10 +66,13 @@ export default function DashboardTabs() {
         </button>
         <button
           onClick={handleLogout}
-          className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-black bg-opacity-20 hover:opacity-30 transition-colors"
+          disabled={loggingOut}
+          className={`flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-black bg-opacity-20 hover:opacity-30 transition-colors ${
+            loggingOut ? 'opacity-50 cursor-not-allowed' : ''
+          }`}
         >
           <LogOut className="w-4 h-4" />
-          Logout
+          {loggingOut ? 'Logging out...' : 'Logout'}
         </button>
       </div>
 
