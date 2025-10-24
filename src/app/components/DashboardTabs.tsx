@@ -2,15 +2,27 @@
 import { useState } from "react";
 import SubmissionDashboard from "./SubmissionDashboard";
 import TemperatureDashboard from "./TemperatureDashboard";
+import { createClient } from '@/lib/supabase';
+import { useRouter } from 'next/navigation';
+import { LogOut } from 'lucide-react';
 
 export default function DashboardTabs() {
   const [activeTab, setActiveTab] = useState<"submission" | "temperature">("submission");
+  const supabase = createClient();
+  const router = useRouter();
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    router.push('/login');
+    router.refresh();
+  };
 
   const isSubmission = activeTab === "submission";
   const bgColor = isSubmission ? "bg-[#b78fbf]" : "bg-[#1e3a8a]";
 
   return (
     <div className={`min-h-screen w-full transition-colors duration-300 ${bgColor}`}>
+
       {/* Tab Bar */}
       <div className="flex">
         <button
@@ -32,6 +44,13 @@ export default function DashboardTabs() {
           }`}
         >
           Temperature Data
+        </button>
+        <button
+          onClick={handleLogout}
+          className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-black bg-opacity-20 hover:opacity-30 transition-colors"
+        >
+          <LogOut className="w-4 h-4" />
+          Logout
         </button>
       </div>
 
