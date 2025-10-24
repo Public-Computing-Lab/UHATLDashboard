@@ -38,6 +38,22 @@ type SortConfig = {
   direction: 'asc' | 'desc';
 };
 
+// Add this helper function near the top of the file, after the imports
+const formatTimestamp = (timestamp: string | null) => {
+  if (!timestamp) return "—";
+  
+  // Parse the timestamp and format it without timezone conversion
+  const date = new Date(timestamp);
+  
+  // Format date as YYYY-MM-DD
+  const dateStr = date.toISOString().split('T')[0];
+  
+  // Format time as HH:MM:SS in UTC
+  const timeStr = date.toISOString().split('T')[1].slice(0, 8);
+  
+  return { dateStr, timeStr };
+};
+
 export default function SubmissionDashboard() {
   const [data, setData] = useState<DataPoint[]>([]);
   const [loading, setLoading] = useState(false);
@@ -791,6 +807,10 @@ export default function SubmissionDashboard() {
                   const duration = row.start_time && row.stop_time ? 
                     (new Date(row.stop_time).getTime() - new Date(row.start_time).getTime()) / (1000 * 60) : 0;
                   
+                  const startTimeFormatted = formatTimestamp(row.start_time);
+                  const stopTimeFormatted = formatTimestamp(row.stop_time);
+                  const submissionFormatted = formatTimestamp(row.submission_datetime);
+                  
                   return (
                     <tr key={idx} className="even:bg-gray-50 hover:bg-gray-100 transition-colors duration-100">
                       <td className="px-4 py-2 border-b">
@@ -812,9 +832,13 @@ export default function SubmissionDashboard() {
                       </td>
                       <td className="px-4 py-2 border-b">
                         <div className="text-xs">
-                          {new Date(row.submission_datetime).toLocaleDateString()}
-                          <br />
-                          {new Date(row.submission_datetime).toLocaleTimeString()}
+                          {submissionFormatted !== "—" ? (
+                            <>
+                              {submissionFormatted.dateStr}
+                              <br />
+                              {submissionFormatted.timeStr}
+                            </>
+                          ) : "—"}
                         </div>
                       </td>
                       <td className="px-4 py-2 border-b">
@@ -849,22 +873,22 @@ export default function SubmissionDashboard() {
                       </td>
                       <td className="px-4 py-2 border-b">
                         <div className="text-xs">
-                          {row.start_time ? (
+                          {startTimeFormatted !== "—" ? (
                             <>
-                              {new Date(row.start_time).toLocaleDateString()}
+                              {startTimeFormatted.dateStr}
                               <br />
-                              {new Date(row.start_time).toLocaleTimeString()}
+                              {startTimeFormatted.timeStr}
                             </>
                           ) : "—"}
                         </div>
                       </td>
                       <td className="px-4 py-2 border-b">
                         <div className="text-xs">
-                          {row.stop_time ? (
+                          {stopTimeFormatted !== "—" ? (
                             <>
-                              {new Date(row.stop_time).toLocaleDateString()}
+                              {stopTimeFormatted.dateStr}
                               <br />
-                              {new Date(row.stop_time).toLocaleTimeString()}
+                              {stopTimeFormatted.timeStr}
                             </>
                           ) : "—"}
                         </div>
