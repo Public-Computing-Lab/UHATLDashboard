@@ -31,12 +31,12 @@ export default function DashboardTabs() {
       }
       
       // Force a hard navigation to clear all state
-      window.location.href = '/login';
+      window.location.href = '/';
       
     } catch (error) {
       console.error('Unexpected logout error:', error);
       // Still redirect even if there's an error
-      window.location.href = '/login';
+      window.location.href = '/';
     } finally {
       setLoggingOut(false);
     }
