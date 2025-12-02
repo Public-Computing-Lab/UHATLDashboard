@@ -712,7 +712,7 @@ export default function TemperatureDashboard() {
             <div className="mt-4 p-3 bg-blue-50 rounded text-sm text-blue-700">
               <div className="flex items-center gap-2">
                 <div className="w-4 h-4 border-2 border-blue-300 border-t-blue-600 rounded-full animate-spin"></div>
-                Loading today's data...
+                Loading data...
               </div>
             </div>
           )}
