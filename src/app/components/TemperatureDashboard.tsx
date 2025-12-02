@@ -154,12 +154,13 @@ export default function TemperatureDashboard() {
   const [mapStyle, setMapStyle] = useState<keyof typeof mapStyles>("clean");
   const mapRef = useRef<LeafletMap | null>(null);
   
-  // Download filter states (separate from map filters)
+  // Download filter states
   const [downloadStartDate, setDownloadStartDate] = useState("");
   const [downloadEndDate, setDownloadEndDate] = useState("");
   const [downloadStartTime, setDownloadStartTime] = useState("");
   const [downloadEndTime, setDownloadEndTime] = useState("");
   const [downloadTransport, setDownloadTransport] = useState<string | null>(null);
+  const [downloadMonth, setDownloadMonth] = useState<number | null>(null); // NEW
   const [downloadLoading, setDownloadLoading] = useState(false);
   const [downloadSummary, setDownloadSummary] = useState<DownloadSummary | null>(null);
   const [downloadData, setDownloadData] = useState<TemperaturePoint[] | null>(null);
@@ -275,10 +276,25 @@ export default function TemperatureDashboard() {
     }
   };
 
-  // Replace the previewDownload function (around line 308)
+  const months = [
+    { value: 1, label: "January" },
+    { value: 2, label: "February" },
+    { value: 3, label: "March" },
+    { value: 4, label: "April" },
+    { value: 5, label: "May" },
+    { value: 6, label: "June" },
+    { value: 7, label: "July" },
+    { value: 8, label: "August" },
+    { value: 9, label: "September" },
+    { value: 10, label: "October" },
+    { value: 11, label: "November" },
+    { value: 12, label: "December" },
+  ];
+
   const previewDownload = async () => {
-    if (!downloadStartDate || !downloadEndDate) {
-      alert("Please select both start and end dates for download");
+    // Validate: either month OR date range must be selected
+    if (!downloadMonth && (!downloadStartDate || !downloadEndDate)) {
+      alert("Please select either a month OR a date range");
       return;
     }
 
@@ -289,7 +305,6 @@ export default function TemperatureDashboard() {
     try {
       console.log("Previewing download...");
       
-      // Use the stream function to get a sample and count
       const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
       const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
@@ -297,22 +312,29 @@ export default function TemperatureDashboard() {
         throw new Error('Supabase configuration missing');
       }
 
-      // Call the stream function with limit 1 to get count
+      const payload: any = {
+        startTime: downloadStartTime,
+        endTime: downloadEndTime,
+        transport: downloadTransport,
+        offset: 0,
+        limit: 1
+      };
+
+      // Add month OR date range
+      if (downloadMonth) {
+        payload.month = downloadMonth;
+      } else {
+        payload.startDate = downloadStartDate;
+        payload.endDate = downloadEndDate;
+      }
+
       const response = await fetch(`${supabaseUrl}/functions/v1/generate-csv-download`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${supabaseAnonKey}`,
         },
-        body: JSON.stringify({
-          startDate: downloadStartDate,
-          endDate: downloadEndDate,
-          startTime: downloadStartTime,
-          endTime: downloadEndTime,
-          transport: downloadTransport,
-          offset: 0,
-          limit: 1 // Just get 1 record to get the total count
-        }),
+        body: JSON.stringify(payload),
       });
 
       if (!response.ok) {
@@ -332,7 +354,9 @@ export default function TemperatureDashboard() {
       const estimatedSizeMB = (totalCount * 150) / (1024 * 1024);
 
       // Build filter summary
-      const dateRange = `${downloadStartDate} to ${downloadEndDate}`;
+      const dateRange = downloadMonth 
+        ? `${months.find(m => m.value === downloadMonth)?.label} (all years)`
+        : `${downloadStartDate} to ${downloadEndDate}`;
       const timeRange = downloadStartTime || downloadEndTime 
         ? `${downloadStartTime || '00:00'} to ${downloadEndTime || '23:59'}`
         : 'All day';
@@ -351,9 +375,7 @@ export default function TemperatureDashboard() {
       console.log(`Preview ready: ${totalCount} total records, ~${estimatedSizeMB.toFixed(2)} MB`);
       
       if (totalCount === 0) {
-        alert("No data found for the selected date range. Please adjust your filters.");
-      } else if (downloadStartTime || downloadEndTime) {
-        console.log(`Note: Time filtering will be applied during download`);
+        alert("No data found for the selected filters. Please adjust your selection.");
       }
     } catch (error) {
       console.error("Preview error:", error);
@@ -364,7 +386,6 @@ export default function TemperatureDashboard() {
     }
   };
 
-  // Execute CSV download using server-side generation
   const executeDownload = async () => {
     if (!downloadSummary) {
       alert("No preview available");
@@ -377,13 +398,19 @@ export default function TemperatureDashboard() {
     try {
       console.log('Starting memory-efficient chunked CSV download...');
 
-      const payload = {
-        startDate: downloadStartDate,
-        endDate: downloadEndDate,
+      const payload: any = {
         startTime: downloadStartTime,
         endTime: downloadEndTime,
         transport: downloadTransport,
       };
+
+      // Add month OR date range
+      if (downloadMonth) {
+        payload.month = downloadMonth;
+      } else {
+        payload.startDate = downloadStartDate;
+        payload.endDate = downloadEndDate;
+      }
 
       const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
       const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -392,10 +419,7 @@ export default function TemperatureDashboard() {
         throw new Error('Supabase configuration missing');
       }
 
-      // Array to hold Blob chunks (memory efficient)
       const blobParts: BlobPart[] = [];
-      
-      // Add CSV headers as first chunk
       blobParts.push('date,time,latitude,longitude,probe_temperature_f,transit\n');
       
       const CHUNK_SIZE = 5000;
@@ -403,7 +427,6 @@ export default function TemperatureDashboard() {
       let hasMore = true;
       let totalFetched = 0;
 
-      // Fetch data in chunks and immediately convert to Blob parts
       while (hasMore) {
         console.log(`Fetching chunk at offset ${offset}...`);
         
@@ -435,13 +458,11 @@ export default function TemperatureDashboard() {
 
         console.log(`Received chunk with ${chunk.fetchedCount} records`);
 
-        // Convert chunk to CSV string
         let chunkCsv = '';
         for (const row of chunk.data) {
           chunkCsv += `${row.date},${row.time},${row.latitude},${row.longitude},${row.probe_temperature_f},${row.transit}\n`;
         }
         
-        // Add this chunk as a Blob part (browser handles this efficiently)
         if (chunkCsv.length > 0) {
           blobParts.push(chunkCsv);
         }
@@ -450,33 +471,33 @@ export default function TemperatureDashboard() {
         offset += CHUNK_SIZE;
         hasMore = chunk.hasMore;
 
-        // Update progress
         const progress = Math.min(Math.round((totalFetched / downloadSummary.count) * 100), 100);
         setDownloadProgress(progress);
         
         console.log(`Progress: ${progress}% (${totalFetched.toLocaleString()} / ${downloadSummary.count.toLocaleString()} records)`);
 
-        // Small delay to prevent overwhelming the browser
         await new Promise(resolve => setTimeout(resolve, 10));
       }
 
       console.log(`All chunks fetched (${totalFetched} records), creating final blob...`);
 
-      // Create final Blob from all parts (browser efficiently combines them)
       const blob = new Blob(blobParts, { type: 'text/csv;charset=utf-8;' });
       
       console.log(`Blob created (${(blob.size / 1024 / 1024).toFixed(2)} MB), triggering download...`);
 
-      // Trigger download
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `temperature_data_${downloadStartDate}_to_${downloadEndDate}.csv`;
+      
+      const filename = downloadMonth
+        ? `temperature_data_${months.find(m => m.value === downloadMonth)?.label}_all_years.csv`
+        : `temperature_data_${downloadStartDate}_to_${downloadEndDate}.csv`;
+      link.download = filename;
+      
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       
-      // Clean up the URL object
       setTimeout(() => window.URL.revokeObjectURL(url), 100);
 
       console.log(`Download complete: ${totalFetched.toLocaleString()} records`);
@@ -488,6 +509,7 @@ export default function TemperatureDashboard() {
       setDownloadStartTime("");
       setDownloadEndTime("");
       setDownloadTransport(null);
+      setDownloadMonth(null);
       setDownloadSummary(null);
       setDownloadProgress(0);
 
@@ -755,33 +777,75 @@ export default function TemperatureDashboard() {
         <h2 className="text-lg font-semibold text-gray-800 mb-4">Download Data</h2>
         
         <div className={`space-y-4 ${downloadLoading ? 'opacity-50 pointer-events-none' : ''}`}>
+          {/* Month Selection */}
+          <div>
+            <label className="block text-xs text-gray-600 mb-1">Filter by Month (all years)</label>
+            <select
+              value={downloadMonth ?? ""}
+              onChange={(e) => {
+                const month = e.target.value ? parseInt(e.target.value) : null;
+                setDownloadMonth(month);
+                // Clear date range when month is selected
+                if (month) {
+                  setDownloadStartDate("");
+                  setDownloadEndDate("");
+                }
+              }}
+              className="border rounded px-2 py-1 text-sm w-full"
+              disabled={downloadLoading}
+            >
+              <option value="">Select a month...</option>
+              {months.map(m => (
+                <option key={m.value} value={m.value}>{m.label}</option>
+              ))}
+            </select>
+            {downloadMonth && (
+              <div className="text-xs text-blue-600 mt-1">
+                Will download all {months.find(m => m.value === downloadMonth)?.label} data across all years
+              </div>
+            )}
+          </div>
+
+          {/* OR divider */}
+          <div className="flex items-center gap-2">
+            <div className="flex-1 border-t border-gray-300"></div>
+            <span className="text-xs text-gray-500 px-2">OR</span>
+            <div className="flex-1 border-t border-gray-300"></div>
+          </div>
+
           {/* Download Date inputs */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs text-gray-600 mb-1">Start Date *</label>
+              <label className="block text-xs text-gray-600 mb-1">Start Date</label>
               <input 
                 type="date" 
                 value={downloadStartDate} 
-                onChange={(e) => setDownloadStartDate(e.target.value)} 
+                onChange={(e) => {
+                  setDownloadStartDate(e.target.value);
+                  // Clear month when date is selected
+                  if (e.target.value) setDownloadMonth(null);
+                }}
                 className="border rounded px-2 py-1 text-sm w-full" 
-                disabled={downloadLoading}
-                required
+                disabled={downloadLoading || downloadMonth !== null}
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-600 mb-1">End Date *</label>
+              <label className="block text-xs text-gray-600 mb-1">End Date</label>
               <input 
                 type="date" 
                 value={downloadEndDate} 
-                onChange={(e) => setDownloadEndDate(e.target.value)} 
+                onChange={(e) => {
+                  setDownloadEndDate(e.target.value);
+                  // Clear month when date is selected
+                  if (e.target.value) setDownloadMonth(null);
+                }}
                 className="border rounded px-2 py-1 text-sm w-full" 
-                disabled={downloadLoading}
-                required
+                disabled={downloadLoading || downloadMonth !== null}
               />
             </div>
           </div>
 
-          {/* Download Time inputs */}
+          {/* Download Time inputs - ALWAYS available */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs text-gray-600 mb-1">Start Time Bound (optional)</label>
@@ -824,19 +888,14 @@ export default function TemperatureDashboard() {
                 </button>
               ))}
             </div>
-            {downloadTransport && (
-              <div className="text-xs text-gray-500 mt-1">
-                Selected: {downloadTransport} (click again to clear)
-              </div>
-            )}
           </div>
 
           {/* Preview button */}
           <button
             onClick={previewDownload}
-            disabled={downloadLoading || !downloadStartDate || !downloadEndDate}
+            disabled={downloadLoading || (!downloadMonth && (!downloadStartDate || !downloadEndDate))}
             className={`w-full py-3 rounded-lg font-semibold transition text-lg ${
-              downloadLoading || !downloadStartDate || !downloadEndDate
+              downloadLoading || (!downloadMonth && (!downloadStartDate || !downloadEndDate))
                 ? "bg-gray-400 text-gray-200 cursor-not-allowed"
                 : "bg-green-600 text-white hover:bg-green-700"
             }`}
