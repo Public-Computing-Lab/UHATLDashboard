@@ -21,6 +21,14 @@ interface TemperaturePoint {
   transit: string;
 }
 
+interface DownloadSummary {
+  count: number;
+  dateRange: string;
+  timeRange: string;
+  transport: string;
+  estimatedSizeMB: number;
+}
+
 function MapRefConnector({ setRef }: { setRef: (map: LeafletMap) => void }) {
   const map = useMap();
 
@@ -89,21 +97,52 @@ function TemperatureMarkers({ points }: { points: TemperaturePoint[] }) {
 // Helper function to get default dates
 function getDefaultDates() {
   const now = new Date();
-  const threeMonthsAgo = new Date(now);
-  threeMonthsAgo.setMonth(now.getMonth() - 3);
   
   return {
-    startDate: threeMonthsAgo.toISOString().split('T')[0],
-    endDate: now.toISOString().split('T')[0],
+    selectedDate: now.toISOString().split('T')[0],
     currentTime: now.toTimeString().slice(0, 5) // HH:MM format
   };
 }
 
-export default function TemperatureDashboard() {
-  const { startDate: defaultStartDate, endDate: defaultEndDate, currentTime } = getDefaultDates();
+// Helper function to convert data to CSV
+function convertToCSV(data: TemperaturePoint[]): string {
+  const headers = ['date', 'time', 'latitude', 'longitude', 'probe_temperature_f', 'transit'];
+  const csvRows = [headers.join(',')];
   
-  const [startDate, setStartDate] = useState(defaultStartDate);
-  const [endDate, setEndDate] = useState(defaultEndDate);
+  for (const point of data) {
+    const row = [
+      point.date,
+      point.time,
+      point.latitude,
+      point.longitude,
+      point.probe_temperature_f,
+      point.transit
+    ];
+    csvRows.push(row.join(','));
+  }
+  
+  return csvRows.join('\n');
+}
+
+// Helper function to trigger CSV download
+function downloadCSV(csvContent: string, filename: string) {
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  const url = URL.createObjectURL(blob);
+  
+  link.setAttribute('href', url);
+  link.setAttribute('download', filename);
+  link.style.visibility = 'hidden';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+export default function TemperatureDashboard() {
+  const { selectedDate: defaultSelectedDate, currentTime } = getDefaultDates();
+  
+  // Map filter states - changed to single date
+  const [selectedDate, setSelectedDate] = useState(defaultSelectedDate);
   const [startTime, setStartTime] = useState("");
   const [endTime, setEndTime] = useState("");
   const [transport, setTransport] = useState<string | null>(null);
@@ -114,6 +153,18 @@ export default function TemperatureDashboard() {
   const [hasInitiallyLoaded, setHasInitiallyLoaded] = useState(false);
   const [mapStyle, setMapStyle] = useState<keyof typeof mapStyles>("clean");
   const mapRef = useRef<LeafletMap | null>(null);
+  
+  // Download filter states (separate from map filters)
+  const [downloadStartDate, setDownloadStartDate] = useState("");
+  const [downloadEndDate, setDownloadEndDate] = useState("");
+  const [downloadStartTime, setDownloadStartTime] = useState("");
+  const [downloadEndTime, setDownloadEndTime] = useState("");
+  const [downloadTransport, setDownloadTransport] = useState<string | null>(null);
+  const [downloadLoading, setDownloadLoading] = useState(false);
+  const [downloadSummary, setDownloadSummary] = useState<DownloadSummary | null>(null);
+  const [downloadData, setDownloadData] = useState<TemperaturePoint[] | null>(null);
+  const [downloadProgress, setDownloadProgress] = useState<number>(0);
+  
   const supabase = createClient();
 
   // Map style options
@@ -151,35 +202,7 @@ export default function TemperatureDashboard() {
     }
   } as const;
 
-  // Helper function to convert JSON to CSV and trigger download
-  const downloadCSV = (data: any[], filename: string) => {
-    if (!data.length) return;
-    
-    const headers = Object.keys(data[0]);
-    const csvContent = [
-      headers.join(","),
-      ...data.map(row => 
-        headers.map(header => {
-          const cell = row[header];
-          return typeof cell === 'string' && cell.includes(',') 
-            ? `"${cell}"` 
-            : cell;
-        }).join(",")
-      )
-    ].join("\n");
-    
-    const blob = new Blob([csvContent], { type: "text/csv" });
-    const url = window.URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    window.URL.revokeObjectURL(url);
-  };
-
-  const fetchPoints = async (downloadCsv = false, isInitialLoad = false) => {
+  const fetchPoints = async (isInitialLoad = false) => {
     const map = mapRef.current;
     if (!map) {
       if (!isInitialLoad) {
@@ -191,13 +214,9 @@ export default function TemperatureDashboard() {
     setLoading(true);
     const bounds = map.getBounds();
     
-    // Use open-ended dates if not specified
-    const effectiveStartDate = startDate || '1900-01-01';
-    const effectiveEndDate = endDate || '2100-12-31';
-    
     const payload = {
-      startDate: effectiveStartDate,
-      endDate: effectiveEndDate,
+      startDate: selectedDate,
+      endDate: selectedDate, // Same day for both start and end
       startTime,
       endTime,
       transport,
@@ -239,11 +258,7 @@ export default function TemperatureDashboard() {
       // Update map data
       setTemperaturePoints(json.data || []);
       
-      // Convert to CSV and download if requested
-      if (downloadCsv && json.data && json.data.length > 0) {
-        const filename = `temperature_data_${effectiveStartDate}_to_${effectiveEndDate}${transport ? `_${transport}` : ''}.csv`;
-        downloadCSV(json.data, filename);
-      } else if (!isInitialLoad && json.data && json.data.length === 0) {
+      if (!isInitialLoad && json.data && json.data.length === 0) {
         alert("No data found for the selected criteria");
       }
       
@@ -260,24 +275,240 @@ export default function TemperatureDashboard() {
     }
   };
 
+  // Replace the previewDownload function (around line 308)
+  const previewDownload = async () => {
+    if (!downloadStartDate || !downloadEndDate) {
+      alert("Please select both start and end dates for download");
+      return;
+    }
+
+    setDownloadLoading(true);
+    setDownloadSummary(null);
+    setDownloadProgress(0);
+
+    try {
+      console.log("Previewing download...");
+      
+      // Use the stream function to get a sample and count
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+      if (!supabaseUrl || !supabaseAnonKey) {
+        throw new Error('Supabase configuration missing');
+      }
+
+      // Call the stream function with limit 1 to get count
+      const response = await fetch(`${supabaseUrl}/functions/v1/generate-csv-download`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${supabaseAnonKey}`,
+        },
+        body: JSON.stringify({
+          startDate: downloadStartDate,
+          endDate: downloadEndDate,
+          startTime: downloadStartTime,
+          endTime: downloadEndTime,
+          transport: downloadTransport,
+          offset: 0,
+          limit: 1 // Just get 1 record to get the total count
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Preview fetch failed:', response.status, errorText);
+        throw new Error(`Preview failed (${response.status}): ${errorText}`);
+      }
+
+      const json = await response.json();
+
+      if (!json.success) {
+        console.error("Function returned error:", json);
+        throw new Error(json.error || 'Failed to get preview');
+      }
+
+      const totalCount = json.total || 0;
+      const estimatedSizeMB = (totalCount * 150) / (1024 * 1024);
+
+      // Build filter summary
+      const dateRange = `${downloadStartDate} to ${downloadEndDate}`;
+      const timeRange = downloadStartTime || downloadEndTime 
+        ? `${downloadStartTime || '00:00'} to ${downloadEndTime || '23:59'}`
+        : 'All day';
+      const transportFilter = downloadTransport || 'All';
+
+      const summary: DownloadSummary = {
+        count: totalCount,
+        dateRange,
+        timeRange,
+        transport: transportFilter,
+        estimatedSizeMB: Math.round(estimatedSizeMB * 100) / 100
+      };
+
+      setDownloadSummary(summary);
+      
+      console.log(`Preview ready: ${totalCount} total records, ~${estimatedSizeMB.toFixed(2)} MB`);
+      
+      if (totalCount === 0) {
+        alert("No data found for the selected date range. Please adjust your filters.");
+      } else if (downloadStartTime || downloadEndTime) {
+        console.log(`Note: Time filtering will be applied during download`);
+      }
+    } catch (error) {
+      console.error("Preview error:", error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      alert(`Failed to preview download: ${errorMessage}\n\nCheck console for details.`);
+    } finally {
+      setDownloadLoading(false);
+    }
+  };
+
+  // Execute CSV download using server-side generation
+  const executeDownload = async () => {
+    if (!downloadSummary) {
+      alert("No preview available");
+      return;
+    }
+
+    setDownloadLoading(true);
+    setDownloadProgress(0);
+
+    try {
+      console.log('Starting memory-efficient chunked CSV download...');
+
+      const payload = {
+        startDate: downloadStartDate,
+        endDate: downloadEndDate,
+        startTime: downloadStartTime,
+        endTime: downloadEndTime,
+        transport: downloadTransport,
+      };
+
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+      if (!supabaseUrl || !supabaseAnonKey) {
+        throw new Error('Supabase configuration missing');
+      }
+
+      // Array to hold Blob chunks (memory efficient)
+      const blobParts: BlobPart[] = [];
+      
+      // Add CSV headers as first chunk
+      blobParts.push('date,time,latitude,longitude,probe_temperature_f,transit\n');
+      
+      const CHUNK_SIZE = 5000;
+      let offset = 0;
+      let hasMore = true;
+      let totalFetched = 0;
+
+      // Fetch data in chunks and immediately convert to Blob parts
+      while (hasMore) {
+        console.log(`Fetching chunk at offset ${offset}...`);
+        
+        const response = await fetch(`${supabaseUrl}/functions/v1/generate-csv-download`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${supabaseAnonKey}`,
+          },
+          body: JSON.stringify({
+            ...payload,
+            offset,
+            limit: CHUNK_SIZE
+          }),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error('Chunk fetch failed:', response.status, errorText);
+          throw new Error(`Chunk fetch failed (${response.status}): ${errorText}`);
+        }
+
+        const chunk = await response.json();
+
+        if (!chunk.success) {
+          console.error('Chunk error:', chunk);
+          throw new Error(chunk.error || 'Failed to fetch chunk');
+        }
+
+        console.log(`Received chunk with ${chunk.fetchedCount} records`);
+
+        // Convert chunk to CSV string
+        let chunkCsv = '';
+        for (const row of chunk.data) {
+          chunkCsv += `${row.date},${row.time},${row.latitude},${row.longitude},${row.probe_temperature_f},${row.transit}\n`;
+        }
+        
+        // Add this chunk as a Blob part (browser handles this efficiently)
+        if (chunkCsv.length > 0) {
+          blobParts.push(chunkCsv);
+        }
+
+        totalFetched += chunk.fetchedCount;
+        offset += CHUNK_SIZE;
+        hasMore = chunk.hasMore;
+
+        // Update progress
+        const progress = Math.min(Math.round((totalFetched / downloadSummary.count) * 100), 100);
+        setDownloadProgress(progress);
+        
+        console.log(`Progress: ${progress}% (${totalFetched.toLocaleString()} / ${downloadSummary.count.toLocaleString()} records)`);
+
+        // Small delay to prevent overwhelming the browser
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+
+      console.log(`All chunks fetched (${totalFetched} records), creating final blob...`);
+
+      // Create final Blob from all parts (browser efficiently combines them)
+      const blob = new Blob(blobParts, { type: 'text/csv;charset=utf-8;' });
+      
+      console.log(`Blob created (${(blob.size / 1024 / 1024).toFixed(2)} MB), triggering download...`);
+
+      // Trigger download
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `temperature_data_${downloadStartDate}_to_${downloadEndDate}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      // Clean up the URL object
+      setTimeout(() => window.URL.revokeObjectURL(url), 100);
+
+      console.log(`Download complete: ${totalFetched.toLocaleString()} records`);
+      alert(`Successfully downloaded ${totalFetched.toLocaleString()} records!`);
+
+      // Clear download state
+      setDownloadStartDate("");
+      setDownloadEndDate("");
+      setDownloadStartTime("");
+      setDownloadEndTime("");
+      setDownloadTransport(null);
+      setDownloadSummary(null);
+      setDownloadProgress(0);
+
+    } catch (error) {
+      console.error("Download error:", error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      alert(`Failed to download data: ${errorMessage}\n\nCheck console for details.`);
+    } finally {
+      setDownloadLoading(false);
+    }
+  };
+
   // Auto-load initial data when map is ready
   useEffect(() => {
     if (mapRef.current && !hasInitiallyLoaded && !loading) {
-      console.log("Auto-loading initial data with last 3 months...");
-      fetchPoints(false, true);
+      console.log("Auto-loading initial data for today...");
+      fetchPoints(true);
     }
   }, [mapRef.current, hasInitiallyLoaded, loading]);
 
   const applyFilters = () => fetchPoints(false);
-  const downloadCurrentPoints = () => {
-    if (temperaturePoints.length > 0) {
-      const filename = `current_temperature_data_${new Date().toISOString().split('T')[0]}.csv`;
-      downloadCSV(temperaturePoints, filename);
-    } else {
-      alert("No data currently loaded on map");
-    }
-  };
-  const downloadWithFilters = () => fetchPoints(true);
 
   // Clear points from map
   const clearPoints = () => {
@@ -287,9 +518,8 @@ export default function TemperatureDashboard() {
 
   // Reset to defaults
   const resetToDefaults = () => {
-    const { startDate: newStartDate, endDate: newEndDate } = getDefaultDates();
-    setStartDate(newStartDate);
-    setEndDate(newEndDate);
+    const { selectedDate: newSelectedDate } = getDefaultDates();
+    setSelectedDate(newSelectedDate);
     setStartTime("");
     setEndTime("");
     setTransport(null);
@@ -302,6 +532,62 @@ export default function TemperatureDashboard() {
   return (
     <main className="flex flex-col min-h-screen p-6 max-w-7xl mx-auto space-y-8">
       <h1 className="text-3xl font-semibold text-white">Temperature Dashboard</h1>
+      
+      {/* Map Style and Temperature Scale Band */}
+      <div className="bg-white text-gray-800 p-6 rounded-lg border border-gray-200 shadow-sm">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Map Style Section */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-3">Map Style</label>
+            <div className="grid grid-cols-3 gap-2">
+              {Object.entries(mapStyles).map(([key, style]) => (
+                <button
+                  key={key}
+                  onClick={() => setMapStyle(key as keyof typeof mapStyles)}
+                  className={`px-2 py-1 border rounded text-xs transition-colors ${
+                    mapStyle === key 
+                      ? "bg-blue-600 text-white border-blue-600" 
+                      : "bg-gray-100 hover:bg-gray-200 border-gray-300"
+                  }`}
+                >
+                  {style.name}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Temperature Scale Section */}
+          <div>
+            <div className="text-sm font-medium text-gray-700 mb-3">Temperature Scale</div>
+            <div className="grid grid-cols-3 gap-2 text-xs">
+              <div className="flex items-center gap-1">
+                <div className="w-3 h-3 rounded-full" style={{backgroundColor: "#0066cc"}}></div>
+                <span>&lt;32°F</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <div className="w-3 h-3 rounded-full" style={{backgroundColor: "#00cccc"}}></div>
+                <span>32-50°F</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <div className="w-3 h-3 rounded-full" style={{backgroundColor: "#00cc00"}}></div>
+                <span>50-70°F</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <div className="w-3 h-3 rounded-full" style={{backgroundColor: "#cccc00"}}></div>
+                <span>70-80°F</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <div className="w-3 h-3 rounded-full" style={{backgroundColor: "#ff8800"}}></div>
+                <span>80-90°F</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <div className="w-3 h-3 rounded-full" style={{backgroundColor: "#ff0000"}}></div>
+                <span>&gt;90°F</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <section className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Map */}
@@ -310,7 +596,7 @@ export default function TemperatureDashboard() {
         >
           <MapContainer
               center={[33.7756, -84.3963]} // Atlanta coordinates
-              zoom={16}
+              zoom={12}
               style={{ height: "100%", width: "100%" }}
               scrollWheelZoom={true}
           >
@@ -326,7 +612,7 @@ export default function TemperatureDashboard() {
         {/* Filter UI */}
         <div className="bg-white text-gray-800 p-6 rounded-lg border border-gray-200 shadow-sm">
           <div className="flex justify-between items-center mb-4">
-            <h2 className="text-lg font-semibold text-gray-800">Filters</h2>
+            <h2 className="text-lg font-semibold text-gray-800">Map Filters</h2>
             <button
               onClick={resetToDefaults}
               className="text-xs px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded transition-colors"
@@ -335,34 +621,29 @@ export default function TemperatureDashboard() {
             </button>
           </div>
           
-          {/* Date inputs */}
-          <div className="grid grid-cols-2 gap-4 mb-4">
-            <div>
-              <label className="block text-xs text-gray-600 mb-1">Start Date (optional)</label>
-              <input 
-                type="date" 
-                value={startDate} 
-                onChange={(e) => setStartDate(e.target.value)} 
-                className="border rounded px-2 py-1 text-sm w-full" 
-                placeholder="Leave empty for open start"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-600 mb-1">End Date (optional)</label>
-              <input 
-                type="date" 
-                value={endDate} 
-                onChange={(e) => setEndDate(e.target.value)} 
-                className="border rounded px-2 py-1 text-sm w-full" 
-                placeholder="Leave empty for open end"
-              />
+          {/* Single Date input */}
+          <div className="mb-4">
+            <label className="block text-xs text-gray-600 mb-1">Select Date</label>
+            <input 
+              type="date" 
+              value={selectedDate} 
+              onChange={(e) => setSelectedDate(e.target.value)} 
+              className="border rounded px-2 py-1 text-sm w-full" 
+            />
+            <div className="text-xs text-gray-500 mt-1">
+              Showing data for: {new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', { 
+                weekday: 'long', 
+                year: 'numeric', 
+                month: 'long', 
+                day: 'numeric' 
+              })}
             </div>
           </div>
 
           {/* Time inputs */}
           <div className="grid grid-cols-2 gap-4 mb-4">
             <div>
-              <label className="block text-xs text-gray-600 mb-1">Start Time (optional)</label>
+              <label className="block text-xs text-gray-600 mb-1">Start Time Bound (optional)</label>
               <input 
                 type="time" 
                 value={startTime} 
@@ -372,7 +653,7 @@ export default function TemperatureDashboard() {
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-600 mb-1">End Time (optional)</label>
+              <label className="block text-xs text-gray-600 mb-1">End Time Bound (optional)</label>
               <input 
                 type="time" 
                 value={endTime} 
@@ -407,39 +688,6 @@ export default function TemperatureDashboard() {
             )}
           </div>
 
-          {/* Map display toggle */}
-          <div className="mb-4 space-y-3">
-            {/* <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={showOnMap}
-                onChange={(e) => setShowOnMap(e.target.checked)}
-                className="rounded"
-              />
-              Show points on map
-            </label> */}
-            
-            {/* Map style selector */}
-            <div>
-              <label className="block text-xs text-gray-600 mb-2">Map Style</label>
-              <div className="grid grid-cols-3 gap-2">
-                {Object.entries(mapStyles).map(([key, style]) => (
-                  <button
-                    key={key}
-                    onClick={() => setMapStyle(key as keyof typeof mapStyles)}
-                    className={`px-2 py-1 border rounded text-xs transition-colors ${
-                      mapStyle === key 
-                        ? "bg-blue-600 text-white border-blue-600" 
-                        : "bg-gray-100 hover:bg-gray-200 border-gray-300"
-                    }`}
-                  >
-                    {style.name}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-
           {/* Primary Apply button */}
           <div className="space-y-2">
             <button
@@ -460,33 +708,6 @@ export default function TemperatureDashboard() {
                 "Apply Filters"
               )}
             </button>
-            
-            {/* Download buttons */}
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={downloadCurrentPoints}
-                disabled={temperaturePoints.length === 0 || loading}
-                className={`py-2 rounded font-medium transition text-sm ${
-                  temperaturePoints.length === 0 || loading
-                    ? "bg-gray-200 text-gray-400 cursor-not-allowed"
-                    : "bg-green-600 text-white hover:bg-green-700"
-                }`}
-              >
-                Download Current ({temperaturePoints.length})
-              </button>
-              
-              <button
-                onClick={downloadWithFilters}
-                disabled={loading}
-                className={`py-2 rounded font-medium transition text-sm ${
-                  loading
-                    ? "bg-gray-200 text-gray-400 cursor-not-allowed"
-                    : "bg-orange-600 text-white hover:bg-orange-700"
-                }`}
-              >
-                Download All (Filtered)
-              </button>
-            </div>
 
             {temperaturePoints.length > 0 && (
               <button
@@ -503,40 +724,7 @@ export default function TemperatureDashboard() {
             <div className="mt-4 p-3 bg-blue-50 rounded text-sm text-blue-700">
               <div className="flex items-center gap-2">
                 <div className="w-4 h-4 border-2 border-blue-300 border-t-blue-600 rounded-full animate-spin"></div>
-                Loading last 3 months of data...
-              </div>
-            </div>
-          )}
-
-          {/* Temperature legend */}
-          {temperaturePoints.length > 0 && (
-            <div className="mt-4 p-3 bg-gray-50 rounded">
-              <div className="text-xs font-medium text-gray-700 mb-2">Temperature Scale</div>
-              <div className="grid grid-cols-3 gap-1 text-xs">
-                <div className="flex items-center gap-1">
-                  <div className="w-3 h-3 rounded-full" style={{backgroundColor: "#0066cc"}}></div>
-                  <span>&lt;32°F</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <div className="w-3 h-3 rounded-full" style={{backgroundColor: "#00cccc"}}></div>
-                  <span>32-50°F</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <div className="w-3 h-3 rounded-full" style={{backgroundColor: "#00cc00"}}></div>
-                  <span>50-70°F</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <div className="w-3 h-3 rounded-full" style={{backgroundColor: "#cccc00"}}></div>
-                  <span>70-80°F</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <div className="w-3 h-3 rounded-full" style={{backgroundColor: "#ff8800"}}></div>
-                  <span>80-90°F</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <div className="w-3 h-3 rounded-full" style={{backgroundColor: "#ff0000"}}></div>
-                  <span>&gt;90°F</span>
-                </div>
+                Loading today's data...
               </div>
             </div>
           )}
@@ -557,6 +745,164 @@ export default function TemperatureDashboard() {
                   </div>
                 )}
               </div>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* Download Section */}
+      <section className="bg-white text-gray-800 p-6 rounded-lg border border-gray-200 shadow-sm">
+        <h2 className="text-lg font-semibold text-gray-800 mb-4">Download Data</h2>
+        
+        <div className={`space-y-4 ${downloadLoading ? 'opacity-50 pointer-events-none' : ''}`}>
+          {/* Download Date inputs */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">Start Date *</label>
+              <input 
+                type="date" 
+                value={downloadStartDate} 
+                onChange={(e) => setDownloadStartDate(e.target.value)} 
+                className="border rounded px-2 py-1 text-sm w-full" 
+                disabled={downloadLoading}
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">End Date *</label>
+              <input 
+                type="date" 
+                value={downloadEndDate} 
+                onChange={(e) => setDownloadEndDate(e.target.value)} 
+                className="border rounded px-2 py-1 text-sm w-full" 
+                disabled={downloadLoading}
+                required
+              />
+            </div>
+          </div>
+
+          {/* Download Time inputs */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">Start Time Bound (optional)</label>
+              <input 
+                type="time" 
+                value={downloadStartTime} 
+                onChange={(e) => setDownloadStartTime(e.target.value)} 
+                className="border rounded px-2 py-1 text-sm w-full" 
+                disabled={downloadLoading}
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">End Time Bound (optional)</label>
+              <input 
+                type="time" 
+                value={downloadEndTime} 
+                onChange={(e) => setDownloadEndTime(e.target.value)} 
+                className="border rounded px-2 py-1 text-sm w-full" 
+                disabled={downloadLoading}
+              />
+            </div>
+          </div>
+
+          {/* Download Transport buttons */}
+          <div>
+            <label className="block text-xs text-gray-600 mb-2">Transport Type (optional)</label>
+            <div className="flex flex-wrap gap-2">
+              {["Walking", "Cycling", "Driving", "Other"].map((type) => (
+                <button
+                  key={type}
+                  onClick={() => setDownloadTransport(type === downloadTransport ? null : type)}
+                  disabled={downloadLoading}
+                  className={`px-3 py-1 border rounded text-sm transition-colors ${
+                    downloadTransport === type 
+                      ? "bg-blue-600 text-white border-blue-600" 
+                      : "bg-gray-100 hover:bg-gray-200 border-gray-300"
+                  } ${downloadLoading ? 'cursor-not-allowed' : ''}`}
+                >
+                  {type}
+                </button>
+              ))}
+            </div>
+            {downloadTransport && (
+              <div className="text-xs text-gray-500 mt-1">
+                Selected: {downloadTransport} (click again to clear)
+              </div>
+            )}
+          </div>
+
+          {/* Preview button */}
+          <button
+            onClick={previewDownload}
+            disabled={downloadLoading || !downloadStartDate || !downloadEndDate}
+            className={`w-full py-3 rounded-lg font-semibold transition text-lg ${
+              downloadLoading || !downloadStartDate || !downloadEndDate
+                ? "bg-gray-400 text-gray-200 cursor-not-allowed"
+                : "bg-green-600 text-white hover:bg-green-700"
+            }`}
+          >
+            {downloadLoading ? (
+              <div className="flex items-center justify-center gap-2">
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                Preparing Preview...
+              </div>
+            ) : (
+              "Preview Download"
+            )}
+          </button>
+
+          {/* Download Summary */}
+          {downloadSummary && (
+            <div className="mt-4 p-4 bg-blue-50 rounded border border-blue-200">
+              <div className="font-semibold text-blue-900 mb-2">Download Summary</div>
+              <div className="text-sm text-blue-800 space-y-1">
+                <div className="font-medium">Total Records: {downloadSummary.count.toLocaleString()}</div>
+                <div>Date Range: {downloadSummary.dateRange}</div>
+                <div>Time Range: {downloadSummary.timeRange}</div>
+                <div>Transport: {downloadSummary.transport}</div>
+                <div>Estimated Size: ~{downloadSummary.estimatedSizeMB} MB</div>
+              </div>
+
+              {/* Info about chunked download */}
+              <div className="mt-3 p-2 bg-blue-100 border border-blue-300 rounded text-sm text-blue-800">
+                ℹ️ Large datasets are downloaded in memory-efficient chunks. Keep this tab open during download.
+              </div>
+
+              {/* Progress bar */}
+              {downloadProgress > 0 && downloadProgress < 100 && (
+                <div className="mt-3">
+                  <div className="flex justify-between text-xs text-blue-700 mb-1">
+                    <span>Downloading...</span>
+                    <span>{downloadProgress}%</span>
+                  </div>
+                  <div className="w-full bg-blue-200 rounded-full h-2">
+                    <div 
+                      className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                      style={{ width: `${downloadProgress}%` }}
+                    ></div>
+                  </div>
+                </div>
+              )}
+
+              {/* Download button */}
+              <button
+                onClick={executeDownload}
+                disabled={downloadLoading}
+                className={`w-full mt-3 py-2 rounded-lg font-semibold transition ${
+                  downloadLoading
+                    ? "bg-gray-400 text-gray-200 cursor-not-allowed"
+                    : "bg-blue-600 text-white hover:bg-blue-700"
+                }`}
+              >
+                {downloadLoading ? (
+                  <div className="flex items-center justify-center gap-2">
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                    {downloadProgress > 0 ? `Downloading ${downloadProgress}%...` : "Starting..."}
+                  </div>
+                ) : (
+                  "Download CSV"
+                )}
+              </button>
             </div>
           )}
         </div>
