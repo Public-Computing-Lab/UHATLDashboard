@@ -104,42 +104,9 @@ function getDefaultDates() {
   };
 }
 
-// Helper function to convert data to CSV
-function convertToCSV(data: TemperaturePoint[]): string {
-  const headers = ['date', 'time', 'latitude', 'longitude', 'probe_temperature_f', 'transit'];
-  const csvRows = [headers.join(',')];
-  
-  for (const point of data) {
-    const row = [
-      point.date,
-      point.time,
-      point.latitude,
-      point.longitude,
-      point.probe_temperature_f,
-      point.transit
-    ];
-    csvRows.push(row.join(','));
-  }
-  
-  return csvRows.join('\n');
-}
-
-// Helper function to trigger CSV download
-function downloadCSV(csvContent: string, filename: string) {
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-  const link = document.createElement('a');
-  const url = URL.createObjectURL(blob);
-  
-  link.setAttribute('href', url);
-  link.setAttribute('download', filename);
-  link.style.visibility = 'hidden';
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-}
 
 export default function TemperatureDashboard() {
-  const { selectedDate: defaultSelectedDate, currentTime } = getDefaultDates();
+  const { selectedDate: defaultSelectedDate} = getDefaultDates();
   
   // Map filter states - changed to single date
   const [selectedDate, setSelectedDate] = useState(defaultSelectedDate);
@@ -163,7 +130,6 @@ export default function TemperatureDashboard() {
   const [downloadMonth, setDownloadMonth] = useState<number | null>(null); // NEW
   const [downloadLoading, setDownloadLoading] = useState(false);
   const [downloadSummary, setDownloadSummary] = useState<DownloadSummary | null>(null);
-  const [downloadData, setDownloadData] = useState<TemperaturePoint[] | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<number>(0);
   
   const supabase = createClient();
