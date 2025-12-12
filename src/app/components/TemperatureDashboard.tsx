@@ -742,117 +742,172 @@ export default function TemperatureDashboard() {
       <section className="bg-white text-gray-800 p-6 rounded-lg border border-gray-200 shadow-sm">
         <h2 className="text-lg font-semibold text-gray-800 mb-4">Download Data</h2>
         
-        <div className={`space-y-4 ${downloadLoading ? 'opacity-50 pointer-events-none' : ''}`}>
-          {/* Month Selection */}
-          <div>
-            <label className="block text-xs text-gray-600 mb-1">Filter by Month (all years)</label>
-            <select
-              value={downloadMonth ?? ""}
-              onChange={(e) => {
-                const month = e.target.value ? parseInt(e.target.value) : null;
-                setDownloadMonth(month);
-                // Clear date range when month is selected
-                if (month) {
-                  setDownloadStartDate("");
-                  setDownloadEndDate("");
-                }
-              }}
-              className="border rounded px-2 py-1 text-sm w-full"
-              disabled={downloadLoading}
-            >
-              <option value="">Select a month...</option>
-              {months.map(m => (
-                <option key={m.value} value={m.value}>{m.label}</option>
-              ))}
-            </select>
-            {downloadMonth && (
-              <div className="text-xs text-blue-600 mt-1">
-                Will download all {months.find(m => m.value === downloadMonth)?.label} data across all years
+        <div className={`space-y-6 ${downloadLoading ? 'opacity-50 pointer-events-none' : ''}`}>
+          {/* Filter by Month Section */}
+          <div className="p-4 border border-gray-300 rounded-lg bg-gray-50">
+            <h3 className="text-sm font-semibold text-gray-700 mb-3">Filter by Month (all years)</h3>
+            
+            {/* Month Selection */}
+            <div className="mb-4">
+              <label className="block text-xs text-gray-600 mb-1">Select Month</label>
+              <select
+                value={downloadMonth ?? ""}
+                onChange={(e) => {
+                  const month = e.target.value ? parseInt(e.target.value) : null;
+                  setDownloadMonth(month);
+                  // Clear date range when month is selected
+                  if (month) {
+                    setDownloadStartDate("");
+                    setDownloadEndDate("");
+                  }
+                }}
+                className="border rounded px-2 py-1 text-sm w-full"
+                disabled={downloadLoading}
+              >
+                <option value="">Select a month...</option>
+                {months.map(m => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+              </select>
+              {downloadMonth && (
+                <div className="text-xs text-blue-600 mt-1">
+                  Will download all {months.find(m => m.value === downloadMonth)?.label} data across all years
+                </div>
+              )}
+            </div>
+
+            {/* Time Bounds for Month */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Start Time Bound (optional)</label>
+                <input 
+                  type="time" 
+                  value={downloadStartTime} 
+                  onChange={(e) => setDownloadStartTime(e.target.value)} 
+                  className="border rounded px-2 py-1 text-sm w-full" 
+                  disabled={downloadLoading}
+                />
               </div>
-            )}
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">End Time Bound (optional)</label>
+                <input 
+                  type="time" 
+                  value={downloadEndTime} 
+                  onChange={(e) => setDownloadEndTime(e.target.value)} 
+                  className="border rounded px-2 py-1 text-sm w-full" 
+                  disabled={downloadLoading}
+                />
+              </div>
+            </div>
+
+            {/* Transport Type for Month */}
+            <div>
+              <label className="block text-xs text-gray-600 mb-2">Transport Type (optional)</label>
+              <div className="flex flex-wrap gap-2">
+                {["Walking", "Cycling", "Driving", "Other"].map((type) => (
+                  <button
+                    key={type}
+                    onClick={() => setDownloadTransport(type === downloadTransport ? null : type)}
+                    disabled={downloadLoading}
+                    className={`px-3 py-1 border rounded text-sm transition-colors ${
+                      downloadTransport === type 
+                        ? "bg-blue-600 text-white border-blue-600" 
+                        : "bg-gray-100 hover:bg-gray-200 border-gray-300"
+                    } ${downloadLoading ? 'cursor-not-allowed' : ''}`}
+                  >
+                    {type}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
 
           {/* OR divider */}
           <div className="flex items-center gap-2">
             <div className="flex-1 border-t border-gray-300"></div>
-            <span className="text-xs text-gray-500 px-2">OR</span>
+            <span className="text-xs text-gray-500 px-2 font-semibold">OR</span>
             <div className="flex-1 border-t border-gray-300"></div>
           </div>
 
-          {/* Download Date inputs */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs text-gray-600 mb-1">Start Date</label>
-              <input 
-                type="date" 
-                value={downloadStartDate} 
-                onChange={(e) => {
-                  setDownloadStartDate(e.target.value);
-                  // Clear month when date is selected
-                  if (e.target.value) setDownloadMonth(null);
-                }}
-                className="border rounded px-2 py-1 text-sm w-full" 
-                disabled={downloadLoading || downloadMonth !== null}
-              />
+          {/* Filter by Date Range Section */}
+          <div className="p-4 border border-gray-300 rounded-lg bg-gray-50">
+            <h3 className="text-sm font-semibold text-gray-700 mb-3">Filter by Date Range</h3>
+            
+            {/* Download Date inputs */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Start Date</label>
+                <input 
+                  type="date" 
+                  value={downloadStartDate} 
+                  onChange={(e) => {
+                    setDownloadStartDate(e.target.value);
+                    // Clear month when date is selected
+                    if (e.target.value) setDownloadMonth(null);
+                  }}
+                  className="border rounded px-2 py-1 text-sm w-full" 
+                  disabled={downloadLoading || downloadMonth !== null}
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">End Date</label>
+                <input 
+                  type="date" 
+                  value={downloadEndDate} 
+                  onChange={(e) => {
+                    setDownloadEndDate(e.target.value);
+                    // Clear month when date is selected
+                    if (e.target.value) setDownloadMonth(null);
+                  }}
+                  className="border rounded px-2 py-1 text-sm w-full" 
+                  disabled={downloadLoading || downloadMonth !== null}
+                />
+              </div>
             </div>
-            <div>
-              <label className="block text-xs text-gray-600 mb-1">End Date</label>
-              <input 
-                type="date" 
-                value={downloadEndDate} 
-                onChange={(e) => {
-                  setDownloadEndDate(e.target.value);
-                  // Clear month when date is selected
-                  if (e.target.value) setDownloadMonth(null);
-                }}
-                className="border rounded px-2 py-1 text-sm w-full" 
-                disabled={downloadLoading || downloadMonth !== null}
-              />
-            </div>
-          </div>
 
-          {/* Download Time inputs - ALWAYS available */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs text-gray-600 mb-1">Start Time Bound (optional)</label>
-              <input 
-                type="time" 
-                value={downloadStartTime} 
-                onChange={(e) => setDownloadStartTime(e.target.value)} 
-                className="border rounded px-2 py-1 text-sm w-full" 
-                disabled={downloadLoading}
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-600 mb-1">End Time Bound (optional)</label>
-              <input 
-                type="time" 
-                value={downloadEndTime} 
-                onChange={(e) => setDownloadEndTime(e.target.value)} 
-                className="border rounded px-2 py-1 text-sm w-full" 
-                disabled={downloadLoading}
-              />
-            </div>
-          </div>
-
-          {/* Download Transport buttons */}
-          <div>
-            <label className="block text-xs text-gray-600 mb-2">Transport Type (optional)</label>
-            <div className="flex flex-wrap gap-2">
-              {["Walking", "Cycling", "Driving", "Other"].map((type) => (
-                <button
-                  key={type}
-                  onClick={() => setDownloadTransport(type === downloadTransport ? null : type)}
+            {/* Download Time inputs for Date Range */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Start Time Bound (optional)</label>
+                <input 
+                  type="time" 
+                  value={downloadStartTime} 
+                  onChange={(e) => setDownloadStartTime(e.target.value)} 
+                  className="border rounded px-2 py-1 text-sm w-full" 
                   disabled={downloadLoading}
-                  className={`px-3 py-1 border rounded text-sm transition-colors ${
-                    downloadTransport === type 
-                      ? "bg-blue-600 text-white border-blue-600" 
-                      : "bg-gray-100 hover:bg-gray-200 border-gray-300"
-                  } ${downloadLoading ? 'cursor-not-allowed' : ''}`}
-                >
-                  {type}
-                </button>
-              ))}
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">End Time Bound (optional)</label>
+                <input 
+                  type="time" 
+                  value={downloadEndTime} 
+                  onChange={(e) => setDownloadEndTime(e.target.value)} 
+                  className="border rounded px-2 py-1 text-sm w-full" 
+                  disabled={downloadLoading}
+                />
+              </div>
+            </div>
+
+            {/* Download Transport buttons for Date Range */}
+            <div>
+              <label className="block text-xs text-gray-600 mb-2">Transport Type (optional)</label>
+              <div className="flex flex-wrap gap-2">
+                {["Walking", "Cycling", "Driving", "Other"].map((type) => (
+                  <button
+                    key={type}
+                    onClick={() => setDownloadTransport(type === downloadTransport ? null : type)}
+                    disabled={downloadLoading}
+                    className={`px-3 py-1 border rounded text-sm transition-colors ${
+                      downloadTransport === type 
+                        ? "bg-blue-600 text-white border-blue-600" 
+                        : "bg-gray-100 hover:bg-gray-200 border-gray-300"
+                    } ${downloadLoading ? 'cursor-not-allowed' : ''}`}
+                  >
+                    {type}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
